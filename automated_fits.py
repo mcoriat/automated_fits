@@ -6,73 +6,85 @@ from astropy.io import fits
 import bxa.xspec as bxa
 import xspec
 
+# Directories for data and scripts
 DIR_DR10 = "/dataAGN/xmmdata/DR10_Spec_bin"
 DIR_SCRIPTS = "/dataAGN/xmmdata/xmm2athena_wp6/src"
-LOG_FILE = "process_log.txt"
 
-def write_log(message):
-    with open(LOG_FILE, 'a') as log:
+# Function to write messages to the log file and print to console
+def write_log(log_file, message):
+    with open(log_file, 'a') as log:
         log.write(message + '\n')
     print(message)
 
-def read_catalog(catalog_file):
+# Function to read the stacked 4XMM-DR11 catalog and map SRCID to corresponding OBSIDs
+def read_stacked_catalog(catalog_file):
     with fits.open(catalog_file) as hdul:
         catalog_data = hdul[1].data
-    return catalog_data
 
-def find_obsids(srcid):
-    obsid_paths = glob.glob(f"{DIR_DR10}/{srcid}/*SRSPEC*.FTZ")
-    obsids = set()
-    for path in obsid_paths:
-        obsid = os.path.basename(path).split('_')[0]
-        obsids.add(obsid)
-    return list(obsids)
+    # Create a dictionary to map each SRCID to its list of OBSIDs
+    srcid_obsid_mapping = {}
+    for i in range(len(catalog_data)):
+        srcid = catalog_data['SRCID'][i]
+        obsid = catalog_data['OBSID'][i]
 
-def check_spectra(srcid, obsids):
+        if srcid in srcid_obsid_mapping:
+            srcid_obsid_mapping[srcid].append(obsid)
+        else:
+            srcid_obsid_mapping[srcid] = [obsid]
+
+    return srcid_obsid_mapping
+
+# Function to check which spectra are suitable for fitting
+def check_spectra(srcid, obsids, log_file):
     good_spectra = []
     for obsid in obsids:
+        # Define paths to the spectrum and background files
         spectrum_file = f"{DIR_DR10}/{srcid}/{obsid}_SRSPEC0001.FTZ"
         background_file = f"{DIR_DR10}/{srcid}/{obsid}_BGSPEC0001.FTZ"
         
+        # Check if the source spectrum and background spectrum files exist
         if not os.path.exists(spectrum_file):
-            write_log(f"SRCID {srcid}: OBSID {obsid} - Missing source spectrum")
+            write_log(log_file, f"SRCID {srcid}: OBSID {obsid} - Missing source spectrum")
             continue
         
         if not os.path.exists(background_file):
-            write_log(f"SRCID {srcid}: OBSID {obsid} - Missing background spectrum")
+            write_log(log_file, f"SRCID {srcid}: OBSID {obsid} - Missing background spectrum")
             continue
         
+        # Check the counts in the background spectrum
         with fits.open(background_file) as bg_hdul:
             bg_counts = bg_hdul[1].data['COUNTS'].sum()
         
-        if bg_counts > 0:
+        if bg_counts > 0:  # Only proceed if background has counts
             with fits.open(spectrum_file) as sp_hdul:
                 sp_counts = sp_hdul[1].data['COUNTS'].sum()
             
-            if sp_counts > 0:
+            if sp_counts > 0:  # Only proceed if source spectrum has counts
+                # Calculate Signal-to-Noise Ratio (SNR)
                 snr = sp_counts / np.sqrt(sp_counts + bg_counts)
                 good_spectra.append((obsid, sp_counts, bg_counts, snr))
-                write_log(f"SRCID {srcid}: OBSID {obsid} - SNR {snr:.2f} (Good for fitting)")
+                write_log(log_file, f"SRCID {srcid}: OBSID {obsid} - SNR {snr:.2f} (Good for fitting)")
             else:
-                write_log(f"SRCID {srcid}: OBSID {obsid} - Source spectrum has zero counts")
+                write_log(log_file, f"SRCID {srcid}: OBSID {obsid} - Source spectrum has zero counts")
         else:
-            write_log(f"SRCID {srcid}: OBSID {obsid} - Background spectrum has zero counts")
+            write_log(log_file, f"SRCID {srcid}: OBSID {obsid} - Background spectrum has zero counts")
             
     return good_spectra
 
-def fit_with_bxa(srcid, spectrum_file, background_file, model_name, redshift, use_galabs, use_tbabs_table, output_dir="bxa"):
+# Function to perform the BXA fitting for a given SRCID and spectrum
+def fit_with_bxa(srcid, spectrum_file, background_file, model_name, redshift, use_galabs, use_tbabs_table, output_dir, log_file):
     try:
         # Create output directory if it doesn't exist
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        # Load the spectrum and background
+        # Load the spectrum and background data into XSPEC
         xspec.AllData.clear()
         xspec.AllData(spectrum_file)
         spectrum = xspec.AllData(1)
         spectrum.background = background_file
 
-        # Define the model
+        # Define the model based on the specified model name
         if model_name == "powerlaw":
             model = xspec.Model("powerlaw")
         elif model_name == "blackbody":
@@ -96,39 +108,45 @@ def fit_with_bxa(srcid, spectrum_file, background_file, model_name, redshift, us
         else:
             raise ValueError(f"Unknown model name: {model_name}")
 
-        # Set additional options
+        # Apply additional model options
         if use_galabs:
             model.setPars(galabs=True)
         if use_tbabs_table:
             model.setPars(tbabs=True)
 
-        # Configure BXA
+        # Configure and run the BXA fitting process
         fit = bxa.Fit(model, output_dir)
         fit.run()
 
-        # Save the results
+        # Save the fitting results
         fit.results(output_dir + "/fit_results.fits")
     except Exception as e:
-        write_log(f"SRCID {srcid}: BXA fitting failed for OBSID {obsid} with model {model_name}. Error: {str(e)}")
+        # Log any errors encountered during the fitting process
+        write_log(log_file, f"SRCID {srcid}: BXA fitting failed for OBSID {obsid} with model {model_name}. Error: {str(e)}")
 
-def fit_spectrum(srcid, spectra, args, model_name):
+# Function to select the best spectrum based on SNR and perform fitting
+def fit_spectrum(srcid, spectra, args, model_name, log_file):
     best_spectrum = max(spectra, key=lambda x: x[3])  # Choosing based on highest SNR
     obsid = best_spectrum[0]
     spectrum_file = f"{DIR_DR10}/{srcid}/{obsid}_SRSPEC0001.FTZ"
     background_file = f"{DIR_DR10}/{srcid}/{obsid}_BGSPEC0001.FTZ"
     
-    write_log(f"Using BXA to fit {model_name} model for SRCID {srcid} OBSID {obsid}")
-    fit_with_bxa(srcid, spectrum_file, background_file, model_name, args.redshift, args.use_galabs, args.use_tbabs_table)
+    # Log the fitting process and perform the BXA fitting
+    write_log(log_file, f"Using BXA to fit {model_name} model for SRCID {srcid} OBSID {obsid}")
+    output_dir = os.path.join(DIR_DR10, srcid)
+    fit_with_bxa(srcid, spectrum_file, background_file, model_name, args.redshift, args.use_galabs, args.use_tbabs_table, output_dir, log_file)
 
+# Main function to handle argument parsing and control the workflow
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("catalog", help="Path to the catalog FITS file")
+    parser.add_argument("catalog", help="Path to the stacked catalog FITS file")
     parser.add_argument("output", help="Path to the output file for results")
     parser.add_argument("--init", action="store_true", help="initialize the directory")
     parser.add_argument("--combine", action="store_true", help="re-merge the spectra")
     parser.add_argument("--fit_bkg", action="store_true", help="fit the background model")
     parser.add_argument("--get_bkg_stat", action="store_true", help="get the bkg statistics")
 
+    # Model fitting options
     parser.add_argument("--fit_pl", action="store_true", help="fit powerlaw")
     parser.add_argument("--fit_bb", action="store_true", help="fit blackbody")
     parser.add_argument("--fit_apec_single", action="store_true", help="fit apec_singe")
@@ -141,6 +159,7 @@ def main():
     parser.add_argument("--fit_zpl", action="store_true", help="fit redshifted powerlaw")
     parser.add_argument("--fit_zplpl", action="store_true", help="fit redshifted double powerlaw")
 
+    # Additional options for model fitting
     parser.add_argument("--suffix", default=None, help="directory suffix to add to srcid on dataAGN. If left out, it is found automatically based on the best-fit parameters. Use --suffix='' to override this behavior.")
     parser.add_argument("--suffix2", default=None, help="directory suffix to add for det_there != det_use")
     parser.add_argument("--redshift", type=float, help="redshift to be used for redshifted models")
@@ -152,47 +171,52 @@ def main():
     parser.add_argument("--overwrite", type=int, default=1, help="overwrite existing model")
     args = parser.parse_args()
 
-    catalog_data = read_catalog(args.catalog)
+    # Read the catalog and map each SRCID to its corresponding OBSIDs
+    srcid_obsid_mapping = read_stacked_catalog(args.catalog)
     results = []
 
-    for src in catalog_data:
-        srcid = src['SRCID']
-        write_log(f"Processing SRCID {srcid}")
-        obsids = find_obsids(srcid)
-        if not obsids:
-            write_log(f"SRCID {srcid}: No OBSIDs found")
-            continue
-        good_spectra = check_spectra(srcid, obsids)
+    for srcid, obsids in srcid_obsid_mapping.items():
+        # Define output directory and log file for the SRCID
+        output_dir = os.path.join(DIR_DR10, srcid)
+        log_file = os.path.join(output_dir, f"{srcid}_process_log.txt")
+
+        # Initialize log file for this SRCID
+        write_log(log_file, f"Processing SRCID {srcid}")
+
+        # Check spectra and identify those that are suitable for fitting
+        good_spectra = check_spectra(srcid, obsids, log_file)
         if not good_spectra:
-            write_log(f"SRCID {srcid}: No good spectra found for fitting")
+            write_log(log_file, f"SRCID {srcid}: No good spectra found for fitting")
             continue
 
-        # Fit each model type requested
+        # Perform fitting for each model type specified
         if args.fit_pl:
-            fit_spectrum(srcid, good_spectra, args, "powerlaw")
+            fit_spectrum(srcid, good_spectra, args, "powerlaw", log_file)
         if args.fit_bb:
-            fit_spectrum(srcid, good_spectra, args, "blackbody")
+            fit_spectrum(srcid, good_spectra, args, "blackbody", log_file)
         if args.fit_apec_single:
-            fit_spectrum(srcid, good_spectra, args, "apec_single")
+            fit_spectrum(srcid, good_spectra, args, "apec_single", log_file)
         if args.fit_apec_apec:
-            fit_spectrum(srcid, good_spectra, args, "apec_apec")
+            fit_spectrum(srcid, good_spectra, args, "apec_apec", log_file)
         if args.fit_apec_apec_const:
-            fit_spectrum(srcid, good_spectra, args, "apec_apec_const")
+            fit_spectrum(srcid, good_spectra, args, "apec_apec_const", log_file)
         if args.fit_bremss:
-            fit_spectrum(srcid, good_spectra, args, "bremss")
+            fit_spectrum(srcid, good_spectra, args, "bremss", log_file)
         if args.fit_bbpl:
-            fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody")
+            fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody", log_file)
         if args.fit_bbpl_const:
-            fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody_const")
+            fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody_const", log_file)
         if args.fit_bbpl_const2:
-            fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody_const2")
+            fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody_const2", log_file)
         if args.fit_zpl:
-            fit_spectrum(srcid, good_spectra, args, "zpowlaw")
+            fit_spectrum(srcid, good_spectra, args, "zpowlaw", log_file)
         if args.fit_zplpl:
-            fit_spectrum(srcid, good_spectra, args, "double_zpowlaw")
+            fit_spectrum(srcid, good_spectra, args, "double_zpowlaw", log_file)
 
+        # Append results to the output list
         results.append((srcid, good_spectra))
     
+    # Write the final results to the specified output file
     with open(args.output, 'w') as f:
         for result in results:
             srcid, spectra = result
@@ -201,10 +225,4 @@ def main():
                 f.write(f"  OBSID: {spectrum[0]}, Source Counts: {spectrum[1]}, Background Counts: {spectrum[2]}, SNR: {spectrum[3]:.2f}\n")
 
 if __name__ == "__main__":
-    # Initialize log file
-    with open(LOG_FILE, 'w') as log:
-        log.write("Process Log\n")
-        log.write("="*40 + "\n")
-
     main()
-
