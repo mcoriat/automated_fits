@@ -70,7 +70,7 @@ def check_spectra(data_dir, srcid, obsids, log_file):
     return good_spectra
 
 # Function to perform the BXA fitting for a given SRCID and spectrum
-def fit_with_bxa(srcid, spectrum_file, background_file, model_name, redshift, use_galabs, use_tbabs_table, output_dir, log_file):
+def fit_with_bxa(srcid, obsid, spectrum_file, background_file, model_name, redshift, use_galabs, use_tbabs_table, output_dir, log_file):
     try:
         # Create output directory if it doesn't exist
         if not os.path.exists(output_dir):
