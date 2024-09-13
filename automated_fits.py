@@ -11,6 +11,16 @@ logger = logging.getLogger(__name__)
 
 # Function to read the stacked 4XMM-DR11 catalog and map SRCID to corresponding OBSIDs
 def read_stacked_catalog(catalog_file):
+    """
+    Read a stacked catalog file and create a dictionary mapping each SRCID to its list of OBSIDs.
+
+    Parameters:
+    catalog_file (str): The path to the stacked catalog file.
+
+    Returns:
+    dict: A dictionary mapping each SRCID to its list of OBSIDs.
+    """
+
     with fits.open(catalog_file) as hdul:
         catalog_data = hdul[1].data
 
@@ -29,6 +39,17 @@ def read_stacked_catalog(catalog_file):
 
 # Function to check which spectra are suitable for fitting
 def check_spectra(data_dir, srcid, obsids, log_file):
+    """
+    Check the spectra for a given source and list of observation IDs.
+    Parameters:
+    - data_dir (str): The directory where the spectra files are located.
+    - srcid (str): The source ID.
+    - obsids (list): A list of observation IDs.
+    - log_file (str): The log file to write the messages.
+    Returns:
+    - good_spectra (list): A list of tuples containing the observation ID, source counts, background counts, and SNR for spectra that pass the checks.
+    """
+
     good_spectra = []
     for obsid in obsids:
         # Define paths to the spectrum and background files
@@ -71,6 +92,28 @@ def check_spectra(data_dir, srcid, obsids, log_file):
 
 # Function to perform the BXA fitting for a given SRCID and spectrum
 def fit_with_bxa(srcid, obsid, spectrum_file, background_file, model_name, redshift, use_galabs, use_tbabs_table, output_dir, log_file):
+    """
+    Fits a spectrum using the BXA (Bayesian X-ray Analysis) method.
+
+    Args:
+        srcid (int): The source ID.
+        obsid (int): The observation ID.
+        spectrum_file (str): The path to the spectrum file.
+        background_file (str): The path to the background file.
+        model_name (str): The name of the model.
+        redshift (float): The redshift value.
+        use_galabs (bool): Whether to use galactic absorption.
+        use_tbabs_table (bool): Whether to use the tbabs table.
+        output_dir (str): The output directory.
+        log_file (str): The path to the log file.
+
+    Raises:
+        Exception: If any error occurs during the fitting process.
+
+    Returns:
+        None
+    """
+    
     try:
         # Create output directory if it doesn't exist
         if not os.path.exists(output_dir):
@@ -104,6 +147,19 @@ def fit_with_bxa(srcid, obsid, spectrum_file, background_file, model_name, redsh
 
 # Function to define the XSPEC model based on the model name
 def xspec_model(model_name, redshift):
+    """
+    Create an XSPEC model based on the given model name and redshift.
+
+    Parameters:
+    - model_name (str): The name of the XSPEC model to create.
+    - redshift (float): The redshift value to use for the model.
+
+    Returns:
+    - model (xspec.Model): The created XSPEC model.
+
+    Raises:
+    - ValueError: If the given model name is unknown.
+    """
     if model_name == "powerlaw":
         model = xspec.Model("powerlaw")
     elif model_name == "blackbody":
@@ -130,6 +186,17 @@ def xspec_model(model_name, redshift):
 
 # Function to select the best spectrum based on SNR and perform fitting
 def fit_spectrum(srcid, spectra, args, model_name, log_file):
+    """
+    Fits a spectrum using the BXA method.
+    Parameters:
+        srcid (str): The source ID.
+        spectra (list): A list of spectra.
+        args (Namespace): The command line arguments.
+        model_name (str): The name of the model.
+        log_file (str): The path to the log file.
+    Returns:
+        None
+    """
     best_spectrum = max(spectra, key=lambda x: x[3])  # Choosing based on highest SNR
     obsid = best_spectrum[0]
     spectrum_file = f"{args.data_dir}/{srcid}/{obsid}_SRSPEC0001.FTZ"
@@ -221,6 +288,18 @@ def main():
 
 # Function to perform the BXA fitting for a given SRCID based on selected model
 def perform_spectrum_fitting(args, srcid, log_file, good_spectra):
+    """
+    Perform spectrum fitting for the given source ID and good spectra.
+
+    Parameters:
+    - args: The command line arguments.
+    - srcid: The source ID.
+    - log_file: The log file to write the fitting results.
+    - good_spectra: The list of good spectra.
+
+    Returns:
+    None
+    """
     if args.fit_pl:
         fit_spectrum(srcid, good_spectra, args, "powerlaw", log_file)
     if args.fit_bb:
