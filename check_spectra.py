@@ -53,16 +53,16 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
 
         # Background file
         background_file = spectrum_file.replace("SRSPEC", "BGSPEC")
-        spec_tuple = get_spectral_counts(spectrum_file, log_file, background_file=background_file)
+        spec_dict = get_spectral_counts(spectrum_file, log_file, background_file=background_file)
 
         # Populate the dictionary
         spectrum_details.update({
-            "sp_counts": spec_tuple[1],
-            "bg_counts": spec_tuple[2],
-            "sp_netcts": spec_tuple[3],
-            "sp_exp": spec_tuple[4],
-            "flag": spec_tuple[5],
-            "snr": spec_tuple[6]
+            "sp_counts": spec_dict["sp_counts"],
+            "bg_counts": spec_dict["bg_counts"],
+            "sp_netcts": spec_dict["sp_netcts"],
+            "sp_exp": spec_dict["sp_exp"],
+            "flag": spec_dict["flag"],
+            "snr": spec_dict["snr"]
         })
 
         # Check for good spectra
@@ -134,5 +134,4 @@ def test_check_spectra():
         
 if __name__ == "__main__":
     test_check_spectra()
-
 
