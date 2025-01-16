@@ -3,9 +3,22 @@ import bxa.xspec as bxa
 import xspec
 import logging
 from astropy.io import fits
+import argparse
 
 logger = logging.getLogger(__name__)
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description="Automated X-ray spectral fitting with BXA")
+    parser.add_argument("srcid", type=str, help="Source ID")
+    parser.add_argument("data_dir", type=str, help="Path to the data directory")
+    parser.add_argument("output_dir", type=str, help="Path to the output directory")
+    parser.add_argument("responses_dir", type=str, help="Path to the responses directory")
+    parser.add_argument("catalogue_file", type=str, help="Path to the catalogue file")
+    parser.add_argument("log_file", type=str, help="Path to the log file")
+    parser.add_argument("--fit_pl", action="store_true", help="Fit power-law model")
+    parser.add_argument("--redshift", type=float, default=1.0, help="Redshift value")
+    parser.add_argument("--overwrite", type=int, default=1, help="Overwrite existing files (1 = True, 0 = False)")
+    return parser.parse_args()
 
 # Function to perform the BXA fitting for a given SRCID based on selected model
 def perform_spectrum_fitting(args, srcid, log_file, good_spectra, output_dir):
@@ -30,29 +43,29 @@ def perform_spectrum_fitting(args, srcid, log_file, good_spectra, output_dir):
     Returns:
     None
     """
-    if args.fit_pl:
+    logger.debug(f"Arguments for fitting: {args}")
+    if args.get('fit_pl', False):
         fit_spectrum(srcid, good_spectra, args, "powerlaw", log_file, output_dir)
-    if args.fit_bb:
+    if args.get('fit_bb', False):
         fit_spectrum(srcid, good_spectra, args, "blackbody", log_file, output_dir)
-    if args.fit_apec_single:
+    if args.get('fit_apec_single', False):
         fit_spectrum(srcid, good_spectra, args, "apec_single", log_file, output_dir)
-    if args.fit_apec_apec:
+    if args.get('fit_apec_apec', False):
         fit_spectrum(srcid, good_spectra, args, "apec_apec", log_file, output_dir)
-    if args.fit_apec_apec_const:
+    if args.get('fit_apec_apec_const', False):
         fit_spectrum(srcid, good_spectra, args, "apec_apec_const", log_file, output_dir)
-    if args.fit_bremss:
+    if args.get('fit_bremss', False):
         fit_spectrum(srcid, good_spectra, args, "bremss", log_file, output_dir)
-    if args.fit_bbpl:
+    if args.get('fit_bbpl', False):
         fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody", log_file, output_dir)
-    if args.fit_bbpl_const:
+    if args.get('fit_bbpl_const', False):
         fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody_const", log_file, output_dir)
-    if args.fit_bbpl_const2:
+    if args.get('fit_bbpl_const2', False):
         fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody_const2", log_file, output_dir)
-    if args.fit_zpl:
+    if args.get('fit_zpl', False):
         fit_spectrum(srcid, good_spectra, args, "zpowlaw", log_file, output_dir)
-    if args.fit_zplpl:
+    if args.get('fit_zplpl', False):
         fit_spectrum(srcid, good_spectra, args, "double_zpowlaw", log_file, output_dir)
-
 
 # Function to select the best spectrum based on SNR and perform fitting
 def fit_spectrum(srcid, spectra, args, model_name, log_file, output_dir):
@@ -111,7 +124,6 @@ def fit_spectrum(srcid, spectra, args, model_name, log_file, output_dir):
         log_file=log_file
     )
 
-
 # Function to define the XSPEC model based on the model name
 def xspec_model(model_name, redshift):
     """
@@ -143,39 +155,29 @@ def xspec_model(model_name, redshift):
         raise ValueError(f"Unknown model name: {model_name}")
     return model
 
-
 # Function to perform the BXA fitting
 def fit_with_bxa(srcid, spectrum_file, background_file, model_name, redshift, use_galabs, use_tbabs_table, output_dir, log_file):
-    """
-    Fits a spectrum using the BXA (Bayesian X-ray Analysis) method.
-
-    Args:
-        srcid (int): The source ID.
-        spectrum_file (str): Path to the spectrum file.
-        background_file (str): Path to the background file.
-        model_name (str): Name of the model.
-        redshift (float): The redshift value.
-        use_galabs (bool): Whether to use galactic absorption.
-        use_tbabs_table (bool): Whether to use the tbabs table.
-        output_dir (str): Output directory.
-        log_file (str): Path to the log file.
-
-    Returns:
-        None
-    """
     try:
         os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"Output directory for SRCID {srcid}: {output_dir}")
+
         xspec.AllData.clear()
         xspec.AllData(spectrum_file)
         spectrum = xspec.AllData(1)
         spectrum.background = background_file
 
         model = xspec_model(model_name, redshift)
+        logger.info(f"Initialized model for SRCID {srcid}: {model.expression}")
 
         fit = bxa.Fit(model, output_dir)
+        logger.info(f"Starting BXA fitting for SRCID {srcid} using {model_name}...")
+
         fit.run()
-        fit.results(os.path.join(output_dir, "fit_results.fits"))
+        result_file = os.path.join(output_dir, "fit_results.fits")
+        fit.results(result_file)
+
+        logger.info(f"Fitting complete for SRCID {srcid}. Results saved in {result_file}")
+
     except Exception as e:
-        message = f"SRCID {srcid}: BXA fitting failed. Error: {str(e)}"
-        logger.error(message)
+        logger.error(f"SRCID {srcid}: BXA fitting failed. Error: {str(e)}")
 

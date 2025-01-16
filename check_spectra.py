@@ -2,80 +2,36 @@ import os
 import numpy as np
 from astropy.io import fits
 import logging
-
 from get_spectral_counts import get_spectral_counts
-
 
 logger = logging.getLogger(__name__)
 
-
-
-# Function to check which spectra are suitable for fitting
-def check_spectra(list_spectra, responses_dir, output_dir, log_file):
-    """
-    Check the spectra for a given list of spectra and return "good spectra" details in dictionaries.
-
-    Parameters:
-    - list_spectra (list): List of spectra file paths.
-    - responses_dir (str): Directory with response matrices (rmf) for pn and MOS.
-    - output_dir (str): Directory to store symbolic links and good spectra details.
-    - log_file (str): Log file to record messages.
-
-    Returns:
-    - pn_spectra (list): A list of dictionaries for good pn spectra.
-    - mos_spectra (list): A list of dictionaries for good mos spectra.
-    """
+def check_spectra(spectra_details, log_file):
     pn_spectra = []
     mos_spectra = []
 
-    responses_dir = os.path.abspath(responses_dir)
-    output_dir = os.path.abspath(output_dir)
+    for spectrum in spectra_details:
+        spectrum_file = spectrum["spectrum_file"]
+        background_file = spectrum["background_file"]
 
-    for spectrum_file in list_spectra:
-        logger.info(f"\n\nWorking on file {spectrum_file}")
-        spectrum_file = os.path.abspath(spectrum_file)
-        name = os.path.basename(spectrum_file)
+        # Determine instrument type based on file name
+        instrument = 'pn' if "PN" in spectrum_file.upper() else 'MOS'
 
-        # Determine instrument type
-        instrument = 'pn' if "PN" in name else 'MOS'
+        # Get spectral counts
+        spec_dict = get_spectral_counts(spectrum_file, log_file, background_file)
+        spec_dict['instrument'] = instrument  # Add the instrument key
+        spec_dict['background_file'] = background_file  # Propagate background_file
 
-        # Initialize dictionary for storing spectrum details
-        spectrum_details = {
-            "spectrum_file": spectrum_file,
-            "sp_counts": np.nan,
-            "bg_counts": np.nan,
-            "sp_netcts": np.nan,
-            "sp_exp": np.nan,
-            "flag": -1,
-            "snr": np.nan,
-            "instrument": instrument
-        }
-
-        # Background file
-        background_file = spectrum_file.replace("SRSPEC", "BGSPEC")
-        spec_dict = get_spectral_counts(spectrum_file, log_file, background_file=background_file)
-
-        # Populate the dictionary
-        spectrum_details.update({
-            "sp_counts": spec_dict["sp_counts"],
-            "bg_counts": spec_dict["bg_counts"],
-            "sp_netcts": spec_dict["sp_netcts"],
-            "sp_exp": spec_dict["sp_exp"],
-            "flag": spec_dict["flag"],
-            "snr": spec_dict["snr"]
-        })
-
-        # Check for good spectra
-        if spectrum_details["flag"] >= 0 and spectrum_details["sp_netcts"] > 0:
-            logger.info(f"Good spectrum found: {spectrum_details}")
+        # Append to appropriate list if the spectrum is valid
+        if spec_dict["flag"] >= 0 and spec_dict["sp_netcts"] > 0:
             if instrument == 'pn':
-                pn_spectra.append(spectrum_details)
+                pn_spectra.append(spec_dict)
             else:
-                mos_spectra.append(spectrum_details)
-        else:
-            logger.info(f"Skipping spectrum: {spectrum_details}")
+                mos_spectra.append(spec_dict)
 
     return pn_spectra, mos_spectra
+
+
 
 
 

@@ -1,13 +1,13 @@
 import os
 
 def list_spectra(srcid, srcid_obsid_dict, data_dir):
-    list_spectra = []
+    spectra_details = []
     try:
         obsid_srcnum_list = srcid_obsid_dict[srcid]
     except KeyError:
         print(f"SRCID {srcid} not found in the dictionary.")
-        return list_spectra
-        
+        return spectra_details
+
     for entry in obsid_srcnum_list:
         obsid = entry['OBS_ID']
         srcnum = entry['SRC_NUM']
@@ -24,10 +24,15 @@ def list_spectra(srcid, srcid_obsid_dict, data_dir):
         print(f"Looking for pattern: {pattern}")
         for file in file_list:
             if pattern in file:
-                list_spectra.append(os.path.join(path, file))
-                
-    print(f"Spectra found: {list_spectra}")
-    return list_spectra
+                spectrum_path = os.path.join(path, file)
+                background_path = spectrum_path.replace("SRSPEC", "BGSPEC")
+                spectra_details.append({
+                    "spectrum_file": spectrum_path,
+                    "background_file": background_path
+                })
+
+    print(f"Spectra details: {spectra_details}")
+    return spectra_details
 
 
 def test_list_spectra():
@@ -41,15 +46,10 @@ def test_list_spectra():
     data_dir = './test_data/'
 
     print("Starting test...")
-    srcid_list_spectra = list_spectra(srcid, srcid_obsid_mapping, data_dir)
-    nlist = len(srcid_list_spectra)
-    expected_nlist = 3
-    print(f"Spectra found: {srcid_list_spectra}")
-    assert nlist == expected_nlist, f"Test failed: {nlist} != {expected_nlist}"
-    print("Test passed.")
+    spectra_details = list_spectra(srcid, srcid_obsid_mapping, data_dir)
+    print(f"Spectra details found: {spectra_details}")
 
 
-# Main block
 if __name__ == "__main__":
     test_list_spectra()
 

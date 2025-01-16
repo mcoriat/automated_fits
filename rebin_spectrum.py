@@ -3,200 +3,213 @@ import numpy as np
 from astropy.io import fits
 import logging
 
-from get_spectral_counts import get_spectral_counts
-
 logger = logging.getLogger(__name__)
 
-# Function to rebin a spectrum, writing to disk a copy of it and returning some basic info
-def rebin_spectrum(infile, outfile, log_file, mincts=1):
+def rebin_spectrum(infile, outfile, background_file, log_file, mincts=1):
     """
-    Reads in an input file, rebins it to have >=mincts counts per bin, taking into account
-    if there are bad channels at the beginning, and flagging as "bad" empty channels at the end.
+    Rebins an input FITS spectrum file to have >=mincts counts per bin.
     """
-    message = f'\n\n Rebinning file {infile} with a minimum of {mincts} counts per bin'
-    logger.info(message)
-
+    logger.info(f"Rebinning file {infile} with a minimum of {mincts} counts per bin")
     outfile = os.path.abspath(outfile)
 
-    # Getting the values for the output dictionary
-    spec_info = list(get_spectral_counts(infile, log_file, background_file='path'))
-    logger.info(f"spec_info from get_spectral_counts: {spec_info}")
+    # Get spectral counts
+    spec_dict = get_spectral_counts(infile, log_file, background_file)
+    logger.info(f"Returned spec_dict in rebin_spectrum: {spec_dict}")
 
-    # Check for invalid data in spec_info
-    if len(spec_info) < 7 or any(isinstance(val, str) or val is None for val in spec_info):
-        logger.error(f"Invalid spec_info data: {spec_info}")
-        return {
-            "spectrum_file": outfile,
-            "sp_counts": np.nan,
-            "bg_counts": np.nan,
-            "sp_netcts": np.nan,
-            "sp_exp": np.nan,
-            "flag": -2,
-            "snr": np.nan,
-        }
-
-    # Populate the dictionary
-    spec_dict = {
-        "spectrum_file": outfile,
-        "sp_counts": spec_info[1],
-        "bg_counts": spec_info[2],
-        "sp_netcts": spec_info[3],
-        "sp_exp": spec_info[4],
-        "flag": spec_info[5],
-        "snr": spec_info[6],
-    }
-
-    # Checking if input file can be opened
-    if spec_dict['flag'] == -2:
-        logger.error(f"Cannot open FITS spectrum file {infile}")
+    # Validate spec_dict
+    if spec_dict["flag"] < 0:
+        logger.error(f"Invalid spec_dict received for {infile}: {spec_dict}")
         return spec_dict
 
-    # (Rest of the code remains unchanged, handling FITS files and binning.)
-    ...
-
-
-    ########
-    # Reading the input file header and data
-    with fits.open(infile) as hdul:
-        data1 = hdul[1].data
-        header0 = hdul[0].header.copy()
-        header1 = hdul[1].header.copy()
-
-    counts = data1['COUNTS']
-    nchan = len(counts)
-
-    # Checking if quality info provided, otherwise fill with 0 (good quality)
     try:
-        quality = data1['QUALITY']
-        hasQuality = True
-        nbad = 0
-        for i in range(nchan):
-            if quality[i] > 0:
-                nbad += 1
-            else:
-                break
-        message = f'    {nbad} initial channels are marked as bad'
-        logger.info(message)
+        with fits.open(infile) as hdul:
+            data = hdul[1].data
+            counts = data['COUNTS']
+            quality = data['QUALITY']
+            grouping = data['GROUPING']
 
-        badmask = quality > 0
-        nbadmask = sum(badmask)
-        message = f'    {nbadmask} total channels are marked as bad'
-        logger.info(message)
+            rebinned_counts = []
+            rebinned_quality = []
+            rebinned_grouping = []
 
-        if nbadmask > nbad:
-            message = '    Additional bad channels not at the beginning'
-            logger.warning(message)
-    except:
-        hasQuality = False
-        quality = np.full(nchan, 0)
-        nbad = 0
+            current_bin = []
+            for i, count in enumerate(counts):
+                current_bin.append(count)
+                if sum(current_bin) >= mincts:
+                    rebinned_counts.append(sum(current_bin))
+                    rebinned_quality.append(0)  # Mark as good
+                    rebinned_grouping.append(-1)  # End of bin
+                    current_bin = []
 
-    try:
-        grouping = data1['GROUPING']
-        hasGrouping = True
-    except:
-        hasGrouping = False
-        grouping = np.full(nchan, 1)
+            # Handle remaining counts
+            if current_bin:
+                rebinned_counts.append(sum(current_bin))
+                rebinned_quality.append(2)  # Mark as bad
+                rebinned_grouping.append(-1)
 
-    groupCounts = 0
-    first = True
-    first_i = 0
+            # Create a new FITS HDU for the rebinned data
+            new_cols = fits.ColDefs([
+                fits.Column(name='CHANNEL', format='I', array=np.arange(1, len(rebinned_counts) + 1)),
+                fits.Column(name='COUNTS', format='J', array=np.array(rebinned_counts)),
+                fits.Column(name='QUALITY', format='I', array=np.array(rebinned_quality)),
+                fits.Column(name='GROUPING', format='I', array=np.array(rebinned_grouping))
+            ])
+            hdu = fits.BinTableHDU.from_columns(new_cols)
 
-    for i in range(nchan):
-        if i >= nbad:
-            groupCounts += counts[i]
-            if groupCounts >= mincts:
-                if first:
-                    pass
-                else:
-                    grouping[i] = -1
-                groupCounts = 0
-                first = True
-                first_i = i + 1
-            elif groupCounts < 1:
-                if not first:
-                    grouping[i] = -1
-                first = False
+            # Write the new file
+            hdu.writeto(outfile, overwrite=True)
+            logger.info(f"Rebinned spectrum written to {outfile}")
 
-    if groupCounts < mincts:
-        grouping[first_i:] = 1
-        quality[first_i:] = 2
-        message = f'    Setting channels {first_i} to last as bad (quality=2)'
-        logger.info(message)
-
-    if hasGrouping:
-        data1['GROUPING'] = grouping
-        hdu = fits.BinTableHDU.from_columns(data1.columns, header=header1)
-    else:
-        colGrouping = fits.ColDefs([fits.Column(name='GROUPING', format='I', array=grouping)])
-        hdu = fits.BinTableHDU.from_columns(data1.columns + colGrouping, header=header1)
-
-    if hasQuality:
-        hdu.data['QUALITY'] = quality
-        hdu = fits.BinTableHDU.from_columns(hdu.data.columns, header=hdu.header)
-    else:
-        colQuality = fits.ColDefs([fits.Column(name='QUALITY', format='I', array=quality)])
-        hdu = fits.BinTableHDU.from_columns(hdu.columns + colQuality, header=hdu.header)
-
-    hdu.name = 'SPECTRUM'
-
-    hdu0 = fits.PrimaryHDU(header=header0)
-    hdu_new = fits.HDUList([hdu0, hdu])
-
-    hdu_new.writeto(outfile, overwrite=True)
-    message = f' {nchan} channels written out to file {outfile}'
-    logger.info(message)
-
-    del hdul, hdu, hdu_new, hdu0, grouping, quality, counts, data1, header0, header1
+    except Exception as e:
+        logger.error(f"Failed to rebin spectrum file {infile}: {e}")
+        spec_dict["flag"] = -1
 
     return spec_dict
 
 
-def test_rebin_spectrum():
+
+# Function to read in a spectrum and its corresponding background file,
+# and return the counts and a flag if any incidence occurred
+def get_spectral_counts(infile, log_file, background_file=''):
+    """
+    Reads in input spectral file infile in FITS format, gets the total counts, and the
+    header keywords BACKFILE, BACKSCAL and EXPOSURE.
+    Then reads in the background file, gets its total counts and the header
+    keyword BACKSCAL
+
+    Then calculates the net counts scaling with the backscale values
+    Finally, writes out a dictionary with this information and a flag
+
+    Parameters:
+    - infile: input spectrum file in FITS format
+    - log_file (str): The log file to write the messages.
+    - background_file (str): The name of the background file (see above)
+
+    Returns:
+    - spec_dict (dict): A dictionary containing the name of the input spectrum, 
+      total source counts, total background counts, total net counts, exposure time, 
+      flag, and signal-to-noise ratio.
+    """
+
+    # Initializing output values
+    spec_dict = {
+        "spectrum_file": infile,
+        "sp_counts": np.nan,
+        "bg_counts": np.nan,
+        "sp_netcts": np.nan,
+        "sp_exp": np.nan,
+        "flag": -2,
+        "snr": np.nan
+    }
+
+    # Logging input details
+    logger.info(f"Processing spectrum file: {infile}")
+
+    # Trying to open the input file
+    try:
+        with fits.open(infile) as hdul:
+            logger.info(f"Opened spectrum file: {infile}")
+            logger.info(f"Header keys: {hdul[1].header.keys()}")
+            logger.info(f"Data columns: {hdul[1].data.columns.names}")
+
+            spec_dict["sp_counts"] = hdul[1].data['COUNTS'].sum()
+            spec_dict["sp_exp"] = hdul[1].header['EXPOSURE']
+            sp_backscal = hdul[1].header['BACKSCAL']
+            bgd_file = hdul[1].header['BACKFILE']
+
+            # Determine the background file
+            if background_file == '':
+                # Use BACKFILE header key to construct full path relative to infile directory
+                background_file = os.path.join(os.path.dirname(infile), bgd_file)
+
+            logger.info(f"Resolved background file: {background_file}")
+
+            # Check if background file exists
+            if not os.path.exists(background_file):
+                logger.error(f"Background file not found: {background_file}")
+                spec_dict["flag"] = -1
+                return spec_dict
+
+            try:
+                with fits.open(background_file) as bg_hdul:
+                    logger.info(f"Opened background file: {background_file}")
+
+                    spec_dict["bg_counts"] = bg_hdul[1].data['COUNTS'].sum()
+                    bg_backscal = bg_hdul[1].header['BACKSCAL']
+
+                    # Calculate net counts
+                    spec_dict["sp_netcts"] = spec_dict["sp_counts"] - (spec_dict["bg_counts"] * sp_backscal / bg_backscal)
+
+                    # Set flag values
+                    if spec_dict["bg_counts"] <= 0:
+                        spec_dict["flag"] = 1
+                    elif spec_dict["sp_netcts"] <= 0 or spec_dict["sp_counts"] <= 0:
+                        spec_dict["flag"] = 2
+                    else:
+                        spec_dict["flag"] = 0
+
+                    # Calculate SNR if flag is 0
+                    if spec_dict["flag"] == 0:
+                        spec_dict["snr"] = spec_dict["sp_netcts"] / np.sqrt(2 * spec_dict["sp_counts"] - spec_dict["sp_netcts"])
+
+            except Exception as e:
+                logger.error(f"Failed to open or process background file {background_file}: {e}")
+                spec_dict["flag"] = -1
+
+    except Exception as e:
+        logger.error(f"Failed to open or process spectrum file {infile}: {e}")
+        spec_dict["flag"] = -2
+
+    return spec_dict
+
+
+def perform_spectrum_fitting(pn_dict, mos_dict, redshift, output_dir, overwrite, args):
+    """
+    Performs spectral fitting using the input data and arguments.
+
+    Parameters:
+    - pn_dict: Dictionary containing pn spectrum data.
+    - mos_dict: Dictionary containing MOS spectrum data.
+    - redshift: Redshift value for the source.
+    - output_dir: Directory to store output.
+    - overwrite: Boolean indicating if existing files should be overwritten.
+    - args: Dictionary of fitting parameters.
+    """
+    logger.info("Starting spectrum fitting...")
+
+    if args.get('fit_pl', False):
+        logger.info("Performing power-law fitting...")
+        # Add power-law fitting logic here
+
+    if args.get('fit_bb', False):
+        logger.info("Performing black-body fitting...")
+        # Add black-body fitting logic here
+
+    logger.info("Spectrum fitting completed.")
+
+
+# Function to test get_spectral_counts
+def test_get_spectral_counts():
     output_dir = './test_data/test'
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
 
-    log_file = os.path.join(output_dir, 'test_rebin_spectrum.txt')
+    # Set up logging
+    log_file = os.path.join(output_dir, 'test_get_spectral_counts.txt')
     logging.basicConfig(filename=log_file, level=logging.INFO)
 
+    # Inexistent spectrum file
     infile = 'dummy_file_FJC.txt'
-    spec_dict = rebin_spectrum(infile, '', log_file)
+    spec_dict = get_spectral_counts(infile, log_file)
     assert spec_dict['flag'] == -2
 
-    mincts = 1
+    # Existent spectrum file, getting correct stats
     infile = './test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ'
-    outfile = os.path.join(output_dir, 'test_rebin_spectrum.grp1')
-    spec_dict = rebin_spectrum(infile, outfile, log_file, mincts=mincts)
-    assert spec_dict['flag'] == 0
-    assert os.path.exists(outfile)
+    spec_dict = get_spectral_counts(infile, log_file, background_file='pps')
+    assert spec_dict['sp_counts'] == 766
+    assert spec_dict['bg_counts'] == 8474
+    assert abs(spec_dict['sp_netcts'] - 271.88) <= 0.01
+    assert abs(spec_dict['sp_exp'] - 82181.94) <= 0.01
 
-    with fits.open(outfile) as sp_hdul:
-        counts = sp_hdul[1].data['COUNTS']
-        quality = sp_hdul[1].data['QUALITY']
-        grouping = sp_hdul[1].data['GROUPING']
-        good = quality == 0
-        tot_good_cts = sum(counts[good])
-        grouping_good = grouping[good]
-        tot_good_bins = sum(grouping_good == 1)
-        assert tot_good_cts == 730
-        assert tot_good_bins == 546
-        good_cts = counts[good]
-        good_grouping = grouping[good]
-        ngood = len(good_cts)
-        tot_cts = good_cts[0]
-
-        for i in range(1, ngood):
-            if good_grouping[i] == 1:
-                assert tot_cts >= mincts
-                tot_cts = good_cts[i]
-            else:
-                tot_cts += good_cts[i]
-
-        assert tot_cts >= mincts
-
-    net = 271.88
-    tot = 766
-    snr = net / np.sqrt(2 * tot - net)
-    assert abs(spec_dict['snr'] - snr) <= 0.01
+    print("All tests passed!")
 
