@@ -98,7 +98,9 @@ def main():
 
     # Step 5: Perform spectral fitting if applicable
     if det_use >= 0:
-        logger.info("Performing spectrum fitting...")
+        obs_id = spectra_details[0]["OBS_ID"] if spectra_details else "UNKNOWN"
+        src_num = spectra_details[0]["SRC_NUM"] if spectra_details else "UNKNOWN"
+        logger.info(f"Performing spectrum fitting for source with obs_id={obs_id} and src_num={src_num}.")
         perform_spectrum_fitting(pn_dict, mos_dict, redshift, output_dir, overwrite)
     else:
         logger.warning("No suitable spectra for fitting.")
@@ -107,4 +109,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
