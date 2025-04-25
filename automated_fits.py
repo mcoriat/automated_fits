@@ -1,113 +1,145 @@
 import os
 import logging
 import numpy as np
+from astropy.io import fits
 from list_spectra import list_spectra
 from check_spectra import check_spectra
 from merge_spectra import merge_spectra
 from spectral_fitting import perform_spectrum_fitting
+from xmm_backgrounds import get_pn_bkg_model_cached, get_mos_bkg_model_cached
+import argparse
+
+def save_fits_results(output_dir, srcid, model_name, pn_bkg_model, mos_bkg_model, source_results):
+    """
+    Saves background and source fitting results in a single FITS file.
+    """
+    filename = f"{srcid}_{model_name}.fits"
+    filepath = os.path.join(output_dir, filename)
+
+    def extract_model_params(model_dict, prefix):
+        model = model_dict.get("model")
+        params = {}
+        if model:
+            for p in model.parameters:
+                params[f"{prefix}_{p.name}"] = p.values[0]
+        params[f"{prefix}_fit_statistic"] = model_dict.get("fit_statistic", -1.0)
+        params[f"{prefix}_fit_dof"] = model_dict.get("fit_dof", -1)
+        return params
+
+    pn_params = extract_model_params(pn_bkg_model, "pn")
+    mos_params = extract_model_params(mos_bkg_model, "mos")
+
+    all_data = {**pn_params, **mos_params, **source_results}
+    cols = [fits.Column(name=k, format='E', array=np.array([v])) for k, v in all_data.items()]
+
+    hdu = fits.BinTableHDU.from_columns(cols)
+    hdu.writeto(filepath, overwrite=True)
+    logging.info(f"Results saved to {filepath}")
 
 def main():
-    # Configuration
-    srcid = "3067718060100029"
-    data_dir = "./test_data"
-    output_dir = "./test_data/tests"
-    log_file = f"{output_dir}/tests.log"
-    redshift = 1.0
-    overwrite = True
+    parser = argparse.ArgumentParser()
+    parser.add_argument("srcid", help="Source ID")
+    parser.add_argument("data_dir", help="Data directory")
+    parser.add_argument("output_dir", help="Output directory")
+    parser.add_argument("log_file", help="Log file")
+    parser.add_argument("responses_dir", help="Responses directory")
+    parser.add_argument("tests_dir", help="Tests directory")
+    parser.add_argument("catalogue_file", help="Path to test catalogue file")
+    parser.add_argument("--fit_pl", action="store_true", help="Fit powerlaw model")
+    parser.add_argument("--fit_bb", action="store_true", help="Fit blackbody model")
+    parser.add_argument("--fit_bkg", action="store_true", help="Fit background models")
+    parser.add_argument("--redshift", type=float, help="Redshift value", default=1.0)
+    parser.add_argument("--overwrite", type=int, default=1, help="Overwrite existing fits")
+    parser.add_argument("--fit_apec_single", action="store_true", help="Fit APEC single model")
+    parser.add_argument("--fit_apec_apec", action="store_true", help="Fit double APEC model")
+    parser.add_argument("--fit_apec_apec_const", action="store_true", help="Fit double APEC model with constant")
+    parser.add_argument("--fit_bremss", action="store_true", help="Fit Bremsstrahlung model")
+    parser.add_argument("--fit_bbpl", action="store_true", help="Fit blackbody + powerlaw model")
+    parser.add_argument("--fit_bbpl_const", action="store_true", help="Fit blackbody + powerlaw with constant model")
+    parser.add_argument("--fit_bbpl_const2", action="store_true", help="Fit blackbody + powerlaw with second constant model")
+    parser.add_argument("--fit_zpl", action="store_true", help="Fit redshifted powerlaw model")
+    parser.add_argument("--fit_zplpl", action="store_true", help="Fit double redshifted powerlaw model")
 
-    # Set up logging
-    os.makedirs(output_dir, exist_ok=True)
+    args = parser.parse_args()
+
+    os.makedirs(args.output_dir, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.FileHandler(log_file)
-        ]
+        handlers=[logging.FileHandler(args.log_file)]
     )
     logger = logging.getLogger(__name__)
 
     logger.info("Starting automated fits script...")
 
-    # Step 1: List spectra
     logger.info("Listing spectra...")
     srcid_obsid_mapping = {
-        srcid: [
-            {"OBS_ID": "0760940101", "SRC_NUM": 11}
+        args.srcid: [
+            ("0760940101", 11)
         ]
     }
-    spectra_details = list_spectra(srcid, srcid_obsid_mapping, data_dir)
+    spectra_details = list_spectra(args.srcid, srcid_obsid_mapping, args.data_dir)
+    print(f"Spectra details: {spectra_details}") 
     if not spectra_details:
         logger.error("No spectra found for the given SRCID.")
         return
 
-    # Step 2: Check spectra
     logger.info("Checking spectra...")
-    pn_spectra, mos_spectra = check_spectra(spectra_details, log_file)
+    wrapped_spectra = [{"spectrum_file": path, "background_file": None} for path in spectra_details]
+    pn_spectra, mos_spectra = check_spectra(wrapped_spectra, args.log_file)
 
-    # Step 3: Merge spectra
     logger.info("Merging spectra...")
-    merged_spectra = merge_spectra(pn_spectra, mos_spectra, srcid, output_dir, log_file)
+    merged_spectra = merge_spectra(pn_spectra, mos_spectra, args.srcid, args.output_dir, args.log_file)
     logger.info(f"Merged spectra: {merged_spectra}")
 
-    # Step 4: Process merged spectra
+    logger.info("Fitting background models...")
+    pn_bkg_model, mos_bkg_model = {}, {}
+
+    if args.fit_bkg:
+        try:
+            pn_path = next((s["spectrum_file"] for s in wrapped_spectra if "PN" in s["spectrum_file"].upper()), None)
+            if pn_path:
+                pn_bkg_model = get_pn_bkg_model_cached(pn_path, "phabs")
+                stat = pn_bkg_model.get("fit_statistic", -1.0)
+                dof = pn_bkg_model.get("fit_dof", -1)
+                logger.info(f"PN background fit statistic: {stat}, dof: {dof}")
+        except Exception as e:
+            logger.error(f"PN background fitting failed: {e}")
+            pn_bkg_model = {}
+
+        try:
+            mos_path = next((s["spectrum_file"] for s in wrapped_spectra if "M1" in s["spectrum_file"] or "M2" in s["spectrum_file"]), None)
+            if mos_path:
+                mos_bkg_model = get_mos_bkg_model_cached(mos_path, "phabs")
+                stat = mos_bkg_model.get("fit_statistic", -1.0)
+                dof = mos_bkg_model.get("fit_dof", -1)
+                logger.info(f"MOS background fit statistic: {stat}, dof: {dof}")
+        except Exception as e:
+            logger.error(f"MOS background fitting failed: {e}")
+            mos_bkg_model = {}
+
     logger.info("Processing merged spectra...")
 
     if len(merged_spectra) == 0:
         logger.error("No spectra available for processing.")
         return
 
-    # Initialize variables for detection status
-    if len(merged_spectra) == 1:
-        # Handle single instrument
-        nan_dict = {
-            "spectrum_file": "",
-            "sp_counts": np.nan,
-            "bg_counts": np.nan,
-            "sp_netcts": np.nan,
-            "sp_exp": np.nan,
-            "flag": -1,
-            "snr": np.nan,
-            "instrument": ""
-        }
+    if args.fit_pl or args.fit_bb:
+        logger.info("Performing spectrum fitting...")
+        args_dict = vars(args)
+        source_results = perform_spectrum_fitting(args.srcid, pn_spectra, mos_spectra, args_dict)
 
-        if merged_spectra[0]["instrument"] == "pn":
-            pn_dict = merged_spectra[0]
-            mos_dict = {**nan_dict, "instrument": "MOS"}
-            det_there = 0
-            det_use = 0 if pn_dict["flag"] == 0 else -1
-        else:
-            mos_dict = merged_spectra[0]
-            pn_dict = {**nan_dict, "instrument": "pn"}
-            det_there = 1
-            det_use = 1 if mos_dict["flag"] == 0 else -1
+        print(f"PN Background Model: {pn_bkg_model}")
+        print(f"MOS Background Model: {mos_bkg_model}")
+        print(f"Source Results: {source_results}")
+
+        save_fits_results(args.output_dir, args.srcid, "source_fitting", pn_bkg_model, mos_bkg_model, source_results)
     else:
-        # Handle both instruments
-        pn_dict = merged_spectra[0]
-        mos_dict = merged_spectra[1]
-        det_there = 2
-        if pn_dict["flag"] == 0 and mos_dict["flag"] == 0:
-            det_use = 2
-        elif pn_dict["flag"] == 0:
-            det_use = 0
-        elif mos_dict["flag"] == 0:
-            det_use = 1
-        else:
-            det_use = -1
-
-    logger.info(f"Detection status: det_there={det_there}, det_use={det_use}")
-
-    # Step 5: Perform spectral fitting if applicable
-    if det_use >= 0:
-        obs_id = spectra_details[0]["OBS_ID"] if spectra_details else "UNKNOWN"
-        src_num = spectra_details[0]["SRC_NUM"] if spectra_details else "UNKNOWN"
-        logger.info(f"Performing spectrum fitting for source with obs_id={obs_id} and src_num={src_num}.")
-        perform_spectrum_fitting(pn_dict, mos_dict, redshift, output_dir, overwrite)
-    else:
-        logger.warning("No suitable spectra for fitting.")
+        logger.warning("No source model selected for fitting.")
 
     logger.info("Automated fits script completed.")
 
+
 if __name__ == "__main__":
     main()
-
 
