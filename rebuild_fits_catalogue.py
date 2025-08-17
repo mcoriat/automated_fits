@@ -20,7 +20,7 @@ def process_chain(chain_file, model_name):
         results[f"{short_name}_50"] = p50[i]
         results[f"{short_name}_16"] = p16[i]
         results[f"{short_name}_84"] = p84[i]
-    return results
+    return results  
 
 def rebuild_catalogue(base_dir="bxa_fit_results", input_catalogue="./test_data/test_catalogue.fits", output_fits="fit_results.fits"):
     # Load input catalogue

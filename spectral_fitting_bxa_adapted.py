@@ -12,7 +12,7 @@ import glob
 # python3 automated_fits.py 3067718060100029 ./test_data . ./test_data/RESPONSES ./test_data/tests ./test_data/test_catalogue.fits dummy_output.txt --use_bxa --model_name=powerlaw --redshift=1.0 --overwrite=1 --export_results_fits --export_filename=fit_results.fits --bxa_output_dir=bxa_fit_results
 
 
-
+    
 def get_model_and_priors(model_name, redshift=0.0):
     if model_name == "powerlaw":
         model = Model("phabs*zpowerlw")

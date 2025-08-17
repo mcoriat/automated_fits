@@ -11,7 +11,7 @@ from spectral_fitting import perform_spectrum_fitting
 from spectral_fitting_bxa_adapted import fit_spectrum_bxa, export_bxa_results_to_fits
 
 logger = logging.getLogger(__name__)
-
+  
 def main():
     parser = argparse.ArgumentParser()
 
