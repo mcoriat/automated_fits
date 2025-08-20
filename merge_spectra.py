@@ -1,6 +1,6 @@
 import os
 import shutil
-#import numpy as np
+import numpy as np
 #from astropy.io import fits
 import logging
 
@@ -57,7 +57,9 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
             # there is at least one spectrum suitable for fitting
             # finding the instrument
             instrument=spec_list[0][7]
-            #
+            message=f'\n\nWorking on instrument {instrument} with {nspec} spectra'
+            logger.info(message)
+             #
             # generating the merged spectrum filename
             outname='{}_{}.pha'.format(srcid,instrument)
             #
@@ -70,63 +72,66 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
             if (nspec>1):
                 # merging the spectra here
                 #
-                # extracting from the list of tuples the individual snr and total and background counts for all spectra
+                # extracting from the list of tuples the individual snr and total and net counts for all spectra
+                # in order to get the SNR we need to use tot and net, because bgd come from the background spectrum
+                #     which is extracted from a different area
+                specs=[val[0] for val in spec_list]
                 snrs=np.array([val[6] for val in spec_list])
-                tots=[val[0] for val in spec_list]
-                bgds=[val[1] for val in spec_list]
-                # getting original indices
-                original_indices = np.arange(len(snrs))
+                tots=[val[1] for val in spec_list]
+                nets=[val[3] for val in spec_list]
                 # getting sorted indices
                 sorted_indices = np.argsort(-snrs)
+                print("   sorted_indices={} ".format(sorted_indices))
                 #
                 # calculating now the cumulative SNRs in decreasing order of individual SNR
+                #
                 # original index of highest individual SNR
                 i0=sorted_indices[0]
                 # cumulative values, initialized with the highest individual SNR
                 cumsnrs=[snrs[i0]]
                 cumtot=tots[i0]
-                cumbgd=bgds[i0]
+                cumnet=nets[i0]
                 # keeping the maximum cumulative SNR, so far
                 max_cumsnr=snrs[i0]
-                # and its original index
-                imax=i0
                 # sorted index of the maximum so far, the first in the list
                 jmax=0
                 # going through the full list of spectra to find the set that produces the maximum SNR
+                j=0
                 for i in sorted_indices[1:]:
                     j+=1
                     cumtot+=tots[i]
-                    cumbgd+=bgds[i]
-                    cumsnr=(cumtot-cumbgd)/np.sqrt(cumtot+cumbgd)
-                    cumsnrs[j]=cumsnr
+                    cumnet+=nets[i]
+                    # the expresion below is equivalent to (tot-bgd)/sqrt(tot+bgd)
+                    #     but, as discussed above, we cannot use directly bgd because it is normalised to a different area
+                    cumsnr=(cumnet)/np.sqrt(2*cumtot-cumnet)
+                    cumsnrs.append(cumsnr)
                     if(cumsnr>max_cumsnr):
                         # higher cumulative SNR, storing it
                         max_cumsnr=cumsnr
-                        # its original index
-                        imax=i
                         # its sorted index
                         jmax=j
                     #
                 #
                 # We now keep all spectra up to the maximum SNR found
                 out_indices=sorted_indices[0:jmax+1]
-                if (test):       
-                    # just testing the algorithm above
+                if (test):   
+                   # just testing the algorithm above
                     # printing some results
                     message=f"Information about the merging of spectra for instrument {instrument}"
-                    message+="   Original_index  Individual_SNR  Cumulative_SNR"
+                    message+="   Original_index  Individual_SNR  Cumulative_SNR Spectrum"
                     for i in range(nspec):
-                        i=sorted_indices[j]
-                        line='\n  {:2.2d}  {:8.2f}  {:8.2f}'.format(i,snrs[i],cumsnrs[j])
+                        j=sorted_indices[i]
+                        line='\n  {:2d}  {:8.2f}  {:8.2f} {}'.format(j,snrs[j],cumsnrs[i],specs[j])
                         message+=line
                     logger.info(message)
+                    print(message)
                     #
                     # generating a "merged" spectrum from the input spectrum with the highest SNR
                     #   just copying it
-                    message=f"Output spectrum is just the input spectrum with the highest SNR"
-                    logger.info(message)
-                    shutil.copy2(spec_list[imax][0],merged_spectrum)
-                    bkg_file = spec_list[imax][0].replace("SRSPEC", "BGSPEC")
+                    message=f"Test mode: Output spectrum is just the input spectrum with the highest SNR {spec_list[i0][0]}"
+                    logger.warning(message)
+                    shutil.copy2(spec_list[i0][0],merged_spectrum)
+                    bkg_file = spec_list[i0][0].replace("SRSPEC", "BGSPEC")
                 else:
                     # full merging needed, using a SAS script
                     # not implemented yet
@@ -188,7 +193,7 @@ def test_merge_spectra():
     #
     # only pn
     #  tuple just below from test_check_spectra.log
-    pn_spectra=[('./test_data/test/P0760940101PNS003SRSPEC0017.FTZ', 766, 8474, 271.8810110703645, 82181.936317917, 0, 7.659018142527241,'pn')]
+    pn_spectra=[('./test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ', 766, 8474, 271.8810110703645, 82181.936317917, 0, 7.659018142527241,'pn')]
     mos_spectra=[]
     merged_list=merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1)
     # output list should have just one element, with the grouped version of the spectrum above
@@ -197,10 +202,11 @@ def test_merge_spectra():
     assert name=='3067718060100029_pn.grp'
 
     #
-    # only mos
+    # only mos, test mode
     pn_spectra=[]
-    mos_spectra=[('./test_data/test/P0760940101M1S001SRSPEC0017.FTZ', 308, 14296, 63.03960341552707, 104469.411107063, 0, 2.6808126142724875,'MOS'),('./test_data/test/P0760940101M2S002SRSPEC0017.FTZ', 236, 19138, 99.06503350999267, 105554.512163162, 0, 5.129840220900734,'MOS') ]
-    merged_list=merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1)
+    mos_spectra=[('./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ', 308, 14296, 63.03960341552707, 104469.411107063, 0, 2.6808126142724875,'MOS'),('./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ', 236, 19138, 99.06503350999267, 105554.512163162, 0, 5.129840220900734,'MOS') ]
+    merged_list=merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1, test=True)
+    print("only MOS: merged_list ",merged_list)
     # output list should have just one element, with the grouped version of the second spectrum above
     assert len(merged_list)==1
     name=merged_list[0][0].split('/')[-1]
@@ -210,8 +216,8 @@ def test_merge_spectra():
 
     #
     # everything, test mode
-    pn_spectra=[('./test_data/test/P0760940101PNS003SRSPEC0017.FTZ', 766, 8474, 271.8810110703645, 82181.936317917, 0, 7.659018142527241,'pn')]
-    mos_spectra=[('./test_data/test/P0760940101M1S001SRSPEC0017.FTZ', 308, 14296, 63.03960341552707, 104469.411107063, 0, 2.6808126142724875,'MOS'),('./test_data/test/P0760940101M2S002SRSPEC0017.FTZ', 236, 19138, 99.06503350999267, 105554.512163162, 0, 5.129840220900734,'MOS') ]
+    pn_spectra=[('./test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ', 766, 8474, 271.8810110703645, 82181.936317917, 0, 7.659018142527241,'pn')]
+    mos_spectra=[('./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ', 308, 14296, 63.03960341552707, 104469.411107063, 0, 2.6808126142724875,'MOS'),('./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ', 236, 19138, 99.06503350999267, 105554.512163162, 0, 5.129840220900734,'MOS') ]
     merged_list=merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1, test=True)
     # output list should contain two elements, with the grouped versions of the first spectrum in the pn list and the second spectrum in the second list above
     assert len(merged_list)==2
