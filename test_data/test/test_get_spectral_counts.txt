@@ -1,0 +1,3 @@
+INFO:__main__:    Cannot open spectrum FITS file dummy_file_FJC.txt
+INFO:__main__:    Cannot open spectrum FITS file dummy_file_FJC.txt
+INFO:__main__:    Cannot open spectrum FITS file dummy_file_FJC.txt

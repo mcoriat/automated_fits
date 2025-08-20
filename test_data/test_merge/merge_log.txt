@@ -1,0 +1,7 @@
+WARNING:root:No background found for ./test_data/test_merge/3067718060100029_pn.pha. Fallback to same file.
+ERROR:root:specgroup failed for ./test_data/test_merge/3067718060100029_pn.pha
+WARNING:__main__: File ./test_data/test_merge/3067718060100029_MOS.pha already exists in directory ./test_data/test_merge, it will be overwritten
+WARNING:root:No background found for ./test_data/test_merge/3067718060100029_MOS.pha. Fallback to same file.
+ERROR:root:specgroup failed for ./test_data/test_merge/3067718060100029_MOS.pha
+INFO:__main__:        (merged and binned file, source counts, background counts, net counts, exposure time, flag, signal-to-noise ratio, instrument) = ('./test_data/test_merge/3067718060100029_pn.grp', 0, 0, 0.0, 0.0, -99, 0.0, 'Unknown') 
+INFO:__main__:        (merged and binned file, source counts, background counts, net counts, exposure time, flag, signal-to-noise ratio, instrument) = ('./test_data/test_merge/3067718060100029_MOS.grp', 0, 0, 0.0, 0.0, -99, 0.0, 'Unknown') 

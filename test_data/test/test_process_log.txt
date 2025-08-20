@@ -1,0 +1,60 @@
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101PNS003SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101PNS003SRSPEC0017.FTZ', np.int64(766), np.int64(8474), np.float64(271.8810110703645), 82181.936317917, 0, np.float64(7.659018142527241), 'pn') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101M1S001SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101M1S001SRSPEC0017.FTZ', np.int64(308), np.int64(14296), np.float64(63.03960341552707), 104469.411107063, 0, np.float64(2.6808126142724875), 'MOS') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101M2S002SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101M2S002SRSPEC0017.FTZ', np.int64(236), np.int64(19138), np.float64(99.06503350999267), 105554.512163162, 0, np.float64(5.129840220900734), 'MOS') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101PNS003SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101PNS003SRSPEC0017.FTZ', np.int64(766), np.int64(8474), np.float64(271.8810110703645), 82181.936317917, 0, np.float64(7.659018142527241), 'pn') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101M1S001SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101M1S001SRSPEC0017.FTZ', np.int64(308), np.int64(14296), np.float64(63.03960341552707), 104469.411107063, 0, np.float64(2.6808126142724875), 'MOS') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101M2S002SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101M2S002SRSPEC0017.FTZ', np.int64(236), np.int64(19138), np.float64(99.06503350999267), 105554.512163162, 0, np.float64(5.129840220900734), 'MOS') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101PNS003SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101PNS003SRSPEC0017.FTZ', np.int64(766), np.int64(8474), np.float64(271.8810110703645), 82181.936317917, 0, np.float64(7.659018142527241), 'pn') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101M1S001SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101M1S001SRSPEC0017.FTZ', np.int64(308), np.int64(14296), np.float64(63.03960341552707), 104469.411107063, 0, np.float64(2.6808126142724875), 'MOS') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101M2S002SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101M2S002SRSPEC0017.FTZ', np.int64(236), np.int64(19138), np.float64(99.06503350999267), 105554.512163162, 0, np.float64(5.129840220900734), 'MOS') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101PNS003SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101PNS003SRSPEC0017.FTZ', np.int64(766), np.int64(8474), np.float64(271.8810110703645), 82181.936317917, 0, np.float64(7.659018142527241), 'pn') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101M1S001SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101M1S001SRSPEC0017.FTZ', np.int64(308), np.int64(14296), np.float64(63.03960341552707), 104469.411107063, 0, np.float64(2.6808126142724875), 'MOS') 
+INFO:__main__:
+
+ Working on file ./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ
+INFO:__main__:       spectrum:P0760940101M2S002SRSPEC0017.FTZ - Good for fitting
+INFO:__main__:        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = ('/home/george/myfiles/automated_fits/automated_fits-fjcarrera_test/test_data/test/P0760940101M2S002SRSPEC0017.FTZ', np.int64(236), np.int64(19138), np.float64(99.06503350999267), 105554.512163162, 0, np.float64(5.129840220900734), 'MOS') 
