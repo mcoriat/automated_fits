@@ -6,6 +6,7 @@ import logging
 
 from rebin_spectrum import rebin_spectrum
 
+import subprocess
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
     - test (boolean): if False, doing the actual merging of the selected spectra, if True, returning the spectrum with the highest
           individual SNR, for testing purposes. Optional, default is False
     Returns:
-    - merged_spectra (list): A list of tuples containing the full path and name for the merged spectra, total source+background counts, total background counts, total net counts, exposure time, a flag, the signal-to-noise ratio, and a string stating whether it is a pn or MOS spectrum
+    - merged_spectra (list): A list of tuples containing the full path and name for the merged spectra, total source+background counts, total background counts, total net counts, exposure time, a flag, the signal-to-noise ratio, a string stating whether it is a pn or MOS spectrum, and a dictionary containing the full path to the rmf,arf,bgd symbolic links
 
     """
 
@@ -63,10 +64,11 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
             # generating the merged spectrum filename
             outname='{}_{}.pha'.format(srcid,instrument)
             #
-            merged_spectrum=os.path.join(output_dir,outname)
+            out_dir=os.path.abspath(output_dir)
+            merged_spectrum=os.path.join(out_dir,outname)
             #
             if(os.path.exists(merged_spectrum)):
-                message=f' File {merged_spectrum} already exists in directory {output_dir}, it will be overwritten'
+                message=f' File {merged_spectrum} already exists in directory {out_dir}, it will be overwritten'
                 logger.warning(message)
             #
             if (nspec>1):
@@ -131,10 +133,49 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                     message=f"Test mode: Output spectrum is just the input spectrum with the highest SNR {spec_list[i0][0]}"
                     logger.warning(message)
                     shutil.copy2(spec_list[i0][0],merged_spectrum)
-                    bkg_file = spec_list[i0][0].replace("SRSPEC", "BGSPEC")
+                    sp_dic=spec_list[i0][8]
+                    sp_dic['SPECFILE']=merged_spectrum
+                    bkg_file = sp_dic['BACKFILE']
                 else:
                     # full merging needed, using a SAS script
                     # not implemented yet
+                    #
+                    # using the list of spectra to be merged created above and the tuples to generate the
+                    #     command for epicspeccombine
+                    # initialising parameters with file lists
+                    pha='\''
+                    bkg='\''
+                    rmf='\''
+                    arf='\''
+                    prefix=''
+                    for i in out_indices:
+                        if(i>0):prefix=' '
+                        sp_dic=spec_list[i][8]
+                        pha+=prefix+sp_dic['SPECFILE']
+                        bkg+=prefix+sp_dic['BACKFILE']
+                        rmf+=prefix+sp_dic['RESPFILE']
+                        arf+=prefix+sp_dic['ANCRFILE']
+                    #
+                    pha+='\''
+                    bkg+='\''
+                    rmf+='\''
+                    arf+='\''
+                    # storing output file names
+                    sp_dic={}
+                    sp_dic['SPECFILE']=merged_spectrum
+                    sp_dic['BACKFILE']=merged_spectrum.replace('.pha','_bgd.pha')
+                    sp_dic['RESPFILE']=merged_spectrum.replace('.pha','.rsp')
+                    sp_dic['ANCRFILE']=''
+                    #
+                    # generating command
+                    command='epicspeccombine pha={} bkg={} rmf={} arf={} filepha=\'{}\' filebkg=\'{}\' filersp=\'{}\' '.format(pha,
+                                                    bkg,rmf,arf,sp_dic['SPECFILE'],sp_dic['BACKFILE'],sp_dic['RESPFILE'])
+                    print(f'   command=({command})')
+                    result=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                    print(f'      stdout=({result.stdout})')
+                    print(f'      stderr=({result.stderr})')
+                    #
+                    bkg_file=sp_dic['BACKFILE']                    
                     continue
                 #
             else:
@@ -146,18 +187,28 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                 shutil.copy2(spec_list[0][0],merged_spectrum)
                 bkg_file = spec_list[0][0].replace("SRSPEC", "BGSPEC")
                 #
+                sp_dic=spec_list[0][8]
+                sp_dic['SPECFILE']=merged_spectrum
             #
             # changing the extension of the merged spectrum to .grp for the binned spectrum
             binned_spectrum=os.path.splitext(merged_spectrum)[0]+'.grp'
             #
             # rebinning the spectrum, now with background file
             spec_tuple=rebin_spectrum(merged_spectrum,binned_spectrum,log_file,mincts=1, background_file=bkg_file)
+            # adding to the tuple the instrument name and the dictionary with the updated filenames
+            out_tuple = list(spec_tuple)
+            out_tuple.append(spec_list[0][7])
+            sp_dic['SPECFILE']=binned_spectrum
+            out_tuple.append(sp_dic)
+            spec_tuple = tuple(out_tuple)
+
+            #
             merged_spectra.append(spec_tuple)
         #
     #
     message='n\nFinished merging spectra. Output results:'
     for spec_tuple in merged_spectra:
-        message=f"        (merged and binned file, source counts, background counts, net counts, exposure time, flag, signal-to-noise ratio, instrument) = {spec_tuple} "
+        message=f"        (merged and binned file, source counts, background counts, net counts, exposure time, flag, signal-to-noise ratio, instrument, filenames) = {spec_tuple} "
         logger.info(message)                
 
     return merged_spectra
@@ -166,6 +217,9 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
 
 def test_merge_spectra():
     output_dir='./test_data/test'
+    # absolute full path
+    out_dir=os.path.abspath(output_dir)
+    # creating output directory
     if not os.path.exists(output_dir) : os.mkdir(output_dir)
     # Set up logging
     log_file = os.path.join(output_dir, 'test_merge_spectra.txt')
@@ -173,27 +227,48 @@ def test_merge_spectra():
     # srcid
     srcid=3067718060100029
     #
+    pn_dic={}
+    pn_dic['SPECFILE']=os.path.join(out_dir,'P0760940101PNS003SRSPEC0017.FTZ')
+    pn_dic['BACKFILE']=pn_dic['SPECFILE'].replace('SRSPEC','BGSPEC')
+    pn_dic['ANCRFILE']=pn_dic['SPECFILE'].replace('SRSPEC','SRCARF')
+    pn_dic['RESPFILE']=os.path.join(out_dir,'epn_e3_ef20_sdY6.rmf')
     #
+    M1_dic={}
+    M1_dic['SPECFILE']=os.path.join(out_dir,'P0760940101M1S001SRSPEC0017.FTZ')
+    M1_dic['BACKFILE']=M1_dic['SPECFILE'].replace('SRSPEC','BGSPEC')
+    M1_dic['ANCRFILE']=M1_dic['SPECFILE'].replace('SRSPEC','SRCARF')
+    M1_dic['RESPFILE']=os.path.join(out_dir,'m1_e13_im_pall_o.rmf')
+    #
+    M2_dic={}
+    M2_dic['SPECFILE']=os.path.join(out_dir,'P0760940101M2S002SRSPEC0017.FTZ')
+    M2_dic['BACKFILE']=M2_dic['SPECFILE'].replace('SRSPEC','BGSPEC')
+    M2_dic['ANCRFILE']=M2_dic['SPECFILE'].replace('SRSPEC','SRCARF')
+    M2_dic['RESPFILE']=os.path.join(out_dir,'m2_e13_im_pall_o.rmf')
+
+    
+    # === Test 1: two empty lists ===
     # it should never get to call merge_spectra with two empty lists, but checking anyway
+    print("\n🔹 Test 1: two empty lists")
     pn_spectra=[]
     mos_spectra=[]
     merged_list=merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1)
     # output list should have no elements
     assert len(merged_list)==0
 
-    #
-    # One empty list and one with errors from before
-    pn_spectra=[('dummyPN.fits',-1,1,-1,1000.0,2,-1,'pn')]
+    # === Test 2: one empty list and one with errors from before ===
+    print("\n🔹 Test 2: one empty list and one with errors from before")
+    pn_spectra=[('dummyPN.fits',-1,1,-1,1000.0,2,-1,'pn',{})]
     mos_spectra=[]
     merged_list=merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1)
     # output list should have just one element, copied from pn_spectra
     assert len(merged_list)==1
     assert merged_list[0][5]==2
 
-    #
+    # === Test 3: only pn ===
+    print("\n🔹 Test 3: only pn")
     # only pn
     #  tuple just below from test_check_spectra.log
-    pn_spectra=[('./test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ', 766, 8474, 271.8810110703645, 82181.936317917, 0, 7.659018142527241,'pn')]
+    pn_spectra=[('./test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ', 766, 8474, 271.8810110703645, 82181.936317917, 0, 7.659018142527241,'pn',pn_dic)]
     mos_spectra=[]
     merged_list=merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1)
     # output list should have just one element, with the grouped version of the spectrum above
@@ -201,10 +276,10 @@ def test_merge_spectra():
     name=merged_list[0][0].split('/')[-1]
     assert name=='3067718060100029_pn.grp'
 
-    #
-    # only mos, test mode
+    # === Test 4: only MOS, test mode ===
+    print("\n🔹 Test 4: only MOS, test mode")
     pn_spectra=[]
-    mos_spectra=[('./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ', 308, 14296, 63.03960341552707, 104469.411107063, 0, 2.6808126142724875,'MOS'),('./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ', 236, 19138, 99.06503350999267, 105554.512163162, 0, 5.129840220900734,'MOS') ]
+    mos_spectra=[('./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ', 308, 14296, 63.03960341552707, 104469.411107063, 0, 2.6808126142724875,'MOS',M1_dic),('./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ', 236, 19138, 99.06503350999267, 105554.512163162, 0, 5.129840220900734,'MOS',M2_dic) ]
     merged_list=merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1, test=True)
     print("only MOS: merged_list ",merged_list)
     # output list should have just one element, with the grouped version of the second spectrum above
@@ -213,11 +288,15 @@ def test_merge_spectra():
     assert name=='3067718060100029_MOS.grp'
     # signal-to-noise-ratio to check that chose the second MOS spectrum
     assert abs(mos_spectra[1][6]-merged_list[0][6])<=0.01
+    # checking now that the dictionary is present and filled
+    assert len(merged_list[0][8])==4
+    # checking that the spec file is properly filled
+    assert merged_list[0][0]==merged_list[0][8]['SPECFILE']
 
-    #
-    # everything, test mode
-    pn_spectra=[('./test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ', 766, 8474, 271.8810110703645, 82181.936317917, 0, 7.659018142527241,'pn')]
-    mos_spectra=[('./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ', 308, 14296, 63.03960341552707, 104469.411107063, 0, 2.6808126142724875,'MOS'),('./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ', 236, 19138, 99.06503350999267, 105554.512163162, 0, 5.129840220900734,'MOS') ]
+    # === Test 5: both pn and MOS, test mode ===
+    print("\n🔹 Test 4: both pn and MOS, test mode")
+    pn_spectra=[('./test_data/0760940101/pps/P0760940101PNS003SRSPEC0017.FTZ', 766, 8474, 271.8810110703645, 82181.936317917, 0, 7.659018142527241,'pn',pn_dic)]
+    mos_spectra=[('./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ', 308, 14296, 63.03960341552707, 104469.411107063, 0, 2.6808126142724875,'MOS',M1_dic),('./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ', 236, 19138, 99.06503350999267, 105554.512163162, 0, 5.129840220900734,'MOS',M2_dic) ]
     merged_list=merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1, test=True)
     # output list should contain two elements, with the grouped versions of the first spectrum in the pn list and the second spectrum in the second list above
     assert len(merged_list)==2
