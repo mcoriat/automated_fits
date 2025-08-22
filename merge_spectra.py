@@ -178,9 +178,21 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                                                     bkg,rmf,arf,sp_dic['SPECFILE'],sp_dic['BACKFILE'],sp_dic['RESPFILE'])
                     cmd=['epicspeccombine',arguments]
                     print(f'   command=({cmd})')
-                    result=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-                    print(f'      stdout=({result.stdout})')
-                    print(f'      stderr=({result.stderr})')
+                    #
+                    # running the SAS command epicspeccombine in the shell
+                    try: 
+                        #result=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
+                        result=subprocess.run(cmd,capture_output=True,check=True)
+                        print(f'      stdout=({result.stdout})')
+                    except Exception as e:
+                        print(f'      Error occured, class=({type(e)})')
+                        print(f'      Error occured e=({e})')
+                        #print(f'      stdout=({e.stdout})')
+                        #print(f'      stderr=({e.stderr})')
+                        # merging failed
+                        message=f'\nMerging of files failed. Error={e}'
+                        logger.error(message)
+                        continue
                     #
                     bkg_file=sp_dic['BACKFILE']                    
                     continue
