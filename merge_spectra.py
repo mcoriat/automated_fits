@@ -66,6 +66,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
             #
             out_dir=os.path.abspath(output_dir)
             merged_spectrum=os.path.join(out_dir,outname)
+            print(f'\noutput_dir=({output_dir})  out_dir=({out_dir}) ')
             #
             if(os.path.exists(merged_spectrum)):
                 message=f' File {merged_spectrum} already exists in directory {out_dir}, it will be overwritten'
@@ -83,7 +84,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                 nets=[val[3] for val in spec_list]
                 # getting sorted indices
                 sorted_indices = np.argsort(-snrs)
-                print("   sorted_indices={} ".format(sorted_indices))
+                print("\n   sorted_indices={} ".format(sorted_indices))
                 #
                 # calculating now the cumulative SNRs in decreasing order of individual SNR
                 #
@@ -147,9 +148,14 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                     bkg='\''
                     rmf='\''
                     arf='\''
-                    prefix=''
+                    j=-1
                     for i in out_indices:
-                        if(i>0):prefix=' '
+                        j+=1
+                        if(j==0):
+                            prefix=''
+                        else:
+                            prefix=' '
+                        #
                         sp_dic=spec_list[i][8]
                         pha+=prefix+sp_dic['SPECFILE']
                         bkg+=prefix+sp_dic['BACKFILE']
@@ -168,10 +174,11 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                     sp_dic['ANCRFILE']=''
                     #
                     # generating command
-                    command='epicspeccombine pha={} bkg={} rmf={} arf={} filepha=\'{}\' filebkg=\'{}\' filersp=\'{}\' '.format(pha,
+                    arguments='pha={} bkg={} rmf={} arf={} filepha=\'{}\' filebkg=\'{}\' filersp=\'{}\' '.format(pha,
                                                     bkg,rmf,arf,sp_dic['SPECFILE'],sp_dic['BACKFILE'],sp_dic['RESPFILE'])
-                    print(f'   command=({command})')
-                    result=subprocess.run(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+                    cmd=['epicspeccombine',arguments]
+                    print(f'   command=({cmd})')
+                    result=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
                     print(f'      stdout=({result.stdout})')
                     print(f'      stderr=({result.stderr})')
                     #
