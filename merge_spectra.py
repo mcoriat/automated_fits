@@ -144,10 +144,14 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                     # using the list of spectra to be merged created above and the tuples to generate the
                     #     command for epicspeccombine
                     # initialising parameters with file lists
-                    pha='\''
-                    bkg='\''
-                    rmf='\''
-                    arf='\''
+                    pha='"'
+                    bkg='"'
+                    rmf='"'
+                    arf='"'
+                    #pha=''
+                    #bkg=''
+                    #rmf=''
+                    #arf=''
                     j=-1
                     for i in out_indices:
                         j+=1
@@ -162,22 +166,31 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                         rmf+=prefix+sp_dic['RESPFILE']
                         arf+=prefix+sp_dic['ANCRFILE']
                     #
-                    pha+='\''
-                    bkg+='\''
-                    rmf+='\''
-                    arf+='\''
+                    pha+='"'
+                    bkg+='"'
+                    rmf+='"'
+                    arf+='"'
                     # storing output file names
                     sp_dic={}
                     sp_dic['SPECFILE']=merged_spectrum
-                    sp_dic['BACKFILE']=merged_spectrum.replace('.pha','_bgd.pha')
-                    sp_dic['RESPFILE']=merged_spectrum.replace('.pha','.rsp')
+                    merged_bgd=merged_spectrum.replace('.pha','_bgd.pha')
+                    sp_dic['BACKFILE']=merged_bgd
+                    merged_rsp=merged_spectrum.replace('.pha','.rsp')
+                    sp_dic['RESPFILE']=merged_rsp
                     sp_dic['ANCRFILE']=''
                     #
                     # generating command
-                    arguments='pha={} bkg={} rmf={} arf={} filepha=\'{}\' filebkg=\'{}\' filersp=\'{}\' '.format(pha,
-                                                    bkg,rmf,arf,sp_dic['SPECFILE'],sp_dic['BACKFILE'],sp_dic['RESPFILE'])
-                    cmd=['epicspeccombine',arguments]
-                    print(f'   command=({cmd})')
+                    # this way of passing the arguments complains that the pha or rmf are not paired
+                    #arguments='pha={} bkg={} rmf={} arf={} filepha="{}" filebkg="{}" filersp="{}" '.format(pha,
+                    #                                bkg,rmf,arf,merged_spectrum,merged_bgd,merged_rsp)
+                    #cmd=['epicspeccombine',arguments]
+                    #
+                    # passing the arguments like a list does not complain about pairing, but the space between values in pha is ignored
+                    # the line just below corresponds to defining pha (and Co) with double quotes around it
+                    cmd=['epicspeccombine',f'pha={pha}',f'bkg={bkg}',f'rmf={rmf}',f'arf={arf}',f'filepha={merged_spectrum}',f'filebkg={merged_bgd}',f'filersp={merged_rsp}']
+                    # the line just below corresponds to defining pha (and Co) without double quotes around it
+                    #cmd=['epicspeccombine',f"pha='{pha}'",f"bkg='{bkg}'",f"rmf='{rmf}'",f"arf='{arf}'",f'filepha={merged_spectrum}',f'filebkg={merged_bgd}',f'filersp={merged_rsp}']
+                    print(f'\n   command=({cmd})')
                     #
                     # running the SAS command epicspeccombine in the shell
                     try: 
@@ -187,8 +200,9 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                     except Exception as e:
                         print(f'      Error occured, class=({type(e)})')
                         print(f'      Error occured e=({e})')
-                        #print(f'      stdout=({e.stdout})')
-                        #print(f'      stderr=({e.stderr})')
+                        if (isinstance(e,subprocess.CalledProcessError)):
+                           print(f'      stdout=({e.stdout})')
+                           print(f'      stderr=({e.stderr})')
                         # merging failed
                         message=f'\nMerging of files failed. Error={e}'
                         logger.error(message)
