@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 # Function to rebin a spectrum, writing to disk a copy of it and returning some basic info
-def rebin_spectrum(infile, outfile, log_file, mincts=1, background_file=None):
+def rebin_spectrum(infile, outfile, log_file, mincts=1, background_file=None, comment=''):
     """
     Reads in an input file, rebins it to have >=mincts counts per bin, taking into account
         if there are bad channels at the beginning, and flagging as "bad" empty channels at the end.
@@ -23,6 +23,7 @@ def rebin_spectrum(infile, outfile, log_file, mincts=1, background_file=None):
     - log_file (str): The log file to write the messages.
     - mincts (int): minimum number of counts per bin (default=1)
     - background_file (str or None): optional background file path
+    - comment (str): optional comment to write the the header of the output rebinned file
 
     Returns:
     - spec_tuple (tuple): A tuple containing the full path and name for the output spectrum, total source counts, total background counts, total net counts, exposure time, a flag, and the signal-to-noise ratio
@@ -146,6 +147,10 @@ def rebin_spectrum(infile, outfile, log_file, mincts=1, background_file=None):
         hdu = fits.BinTableHDU.from_columns(hdu.columns + colQuality, header=hdu.header)
 
     hdu.name = 'SPECTRUM'
+    
+    # adding comment, if necessary
+    if(len(comment)>0):
+        hdu.header['COMMENT']=comment
 
     hdu0 = fits.PrimaryHDU(header=header0)
     hdu_new = fits.HDUList([hdu0, hdu])
