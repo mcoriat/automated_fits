@@ -47,6 +47,7 @@ def test_list_spectra():
     print(f"Found {len(srcid_list_spectra)} spectra:")
     for s in srcid_list_spectra:
         print(f"  - {s}")
+    assert len(srcid_list_spectra)==3
 
     
 if __name__ == "__main__":
