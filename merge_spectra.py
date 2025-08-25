@@ -5,6 +5,7 @@ import numpy as np
 import logging
 
 from rebin_spectrum import rebin_spectrum
+from get_spectral_counts import get_spectral_counts
 
 import subprocess
 
@@ -42,6 +43,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
     message='\n\nMerging spectra'
 
     merged_spectra=[]
+    in_files=[]
 
     for spec_list in [pn_spectra,mos_spectra]:
         nspec=len(spec_list)
@@ -58,7 +60,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
             # there is at least one spectrum suitable for fitting
             # finding the instrument
             instrument=spec_list[0][7]
-            message=f'\n\nWorking on instrument {instrument} with {nspec} spectra'
+            message=f'\n\nWorking on instrument {instrument} with {nspec} spectra\n\n'
             logger.info(message)
              #
             # generating the merged spectrum filename
@@ -66,7 +68,6 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
             #
             out_dir=os.path.abspath(output_dir)
             merged_spectrum=os.path.join(out_dir,outname)
-            print(f'\noutput_dir=({output_dir})  out_dir=({out_dir}) ')
             #
             if(os.path.exists(merged_spectrum)):
                 message=f' File {merged_spectrum} already exists in directory {out_dir}, it will be overwritten'
@@ -84,7 +85,6 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                 nets=[val[3] for val in spec_list]
                 # getting sorted indices
                 sorted_indices = np.argsort(-snrs)
-                print("\n   sorted_indices={} ".format(sorted_indices))
                 #
                 # calculating now the cumulative SNRs in decreasing order of individual SNR
                 #
@@ -117,21 +117,26 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                 #
                 # We now keep all spectra up to the maximum SNR found
                 out_indices=sorted_indices[0:jmax+1]
+                # printing some results
+                message=f"\nInformation about the merging of spectra for instrument {instrument}"
+                message+="\n   Original_index  Individual_SNR  Cumulative_SNR Spectrum Input_file Merged"
+                for j in range(nspec):
+                    i=sorted_indices[j]
+                    if(j<=jmax):
+                        merged='Yes'
+                        in_file=specs[i].split('/')[-1]
+                        in_files.append(in_file)
+                    else:
+                        merged='No'
+                    line='\n  {:2d}  {:8.2f}  {:8.2f} {} {}'.format(i,snrs[i],cumsnrs[j],specs[i],merged)
+                    message+=line
+                logger.info(message)
                 if (test):   
                    # just testing the algorithm above
-                    # printing some results
-                    message=f"Information about the merging of spectra for instrument {instrument}"
-                    message+="   Original_index  Individual_SNR  Cumulative_SNR Spectrum"
-                    for i in range(nspec):
-                        j=sorted_indices[i]
-                        line='\n  {:2d}  {:8.2f}  {:8.2f} {}'.format(j,snrs[j],cumsnrs[i],specs[j])
-                        message+=line
-                    logger.info(message)
-                    print(message)
                     #
                     # generating a "merged" spectrum from the input spectrum with the highest SNR
                     #   just copying it
-                    message=f"Test mode: Output spectrum is just the input spectrum with the highest SNR {spec_list[i0][0]}"
+                    message=f"\nTest mode: Output spectrum is just the input spectrum with the highest SNR {spec_list[i0][0]}"
                     logger.warning(message)
                     shutil.copy2(spec_list[i0][0],merged_spectrum)
                     sp_dic=spec_list[i0][8]
@@ -139,7 +144,6 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                     bkg_file = sp_dic['BACKFILE']
                 else:
                     # full merging needed, using a SAS script
-                    # not implemented yet
                     #
                     # using the list of spectra to be merged created above and the tuples to generate the
                     #     command for epicspeccombine
@@ -148,10 +152,6 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                     bkg='"'
                     rmf='"'
                     arf='"'
-                    #pha=''
-                    #bkg=''
-                    #rmf=''
-                    #arf=''
                     j=-1
                     for i in out_indices:
                         j+=1
@@ -178,25 +178,63 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                     merged_rsp=merged_spectrum.replace('.pha','.rsp')
                     sp_dic['RESPFILE']=merged_rsp
                     sp_dic['ANCRFILE']=''
+                    
+                    '''
+                    
+                    250825 FJC: This piece of code corresponds to attempts to run epicspeccombine directly on the command line
+                                I was unable to get the right combination of single and double quotes so that epicspeccombine
+                                  interpreted correctly the list of files, so switched instead to writing a script and
+                                  executing it, see below
+                    
                     #
                     # generating command
-                    # this way of passing the arguments complains that the pha or rmf are not paired
-                    #arguments='pha={} bkg={} rmf={} arf={} filepha="{}" filebkg="{}" filersp="{}" '.format(pha,
+                    # this way of passing the arguments to the shell complains that the pha or rmf are not paired
+                    arguments='pha={} bkg={} rmf={} arf={} filepha="{}" filebkg="{}" filersp="{}" '.format(pha,
                     #                                bkg,rmf,arf,merged_spectrum,merged_bgd,merged_rsp)
-                    #cmd=['epicspeccombine',arguments]
+                    cmd=['epicspeccombine',arguments]
                     #
                     # passing the arguments like a list does not complain about pairing, but the space between values in pha is ignored
                     # the line just below corresponds to defining pha (and Co) with double quotes around it
-                    cmd=['epicspeccombine',f'pha={pha}',f'bkg={bkg}',f'rmf={rmf}',f'arf={arf}',f'filepha={merged_spectrum}',f'filebkg={merged_bgd}',f'filersp={merged_rsp}']
+                    #cmd=['epicspeccombine',f'pha={pha}',f'bkg={bkg}',f'rmf={rmf}',f'arf={arf}',f'filepha={merged_spectrum}',f'filebkg={merged_bgd}',f'filersp={merged_rsp}']
                     # the line just below corresponds to defining pha (and Co) without double quotes around it
                     #cmd=['epicspeccombine',f"pha='{pha}'",f"bkg='{bkg}'",f"rmf='{rmf}'",f"arf='{arf}'",f'filepha={merged_spectrum}',f'filebkg={merged_bgd}',f'filersp={merged_rsp}']
                     print(f'\n   command=({cmd})')
+                    
+                    '''
+                    
                     #
-                    # running the SAS command epicspeccombine in the shell
+                    # preparing a string with the command line to be written to a shell script
+                    combine=f'epicspeccombine pha={pha} bkg={bkg} rmf={rmf} arf={arf} filepha="{merged_spectrum}" filebkg="{merged_bgd}" filersp="{merged_rsp}" '
+                    #
+                    # running the SAS command epicspeccombine
+                    #
+                    # the lines just below are for first writing a shell script and then running it
+                    merged_script=merged_spectrum.split('.')[0]+"_merge.sh"
+                    if(os.path.exists(merged_script)):
+                        message=f'\n File {merged_script} already exists in directory {out_dir}, it will be overwritten'
+                        logger.warning(message)
+                    # writing the shell script
+                    try:
+                        mergefile=open(merged_script,'w+')
+                        mergefile.write(combine)
+                        mergefile.close()
+                    except Exception as e:
+                        # writing the file failed
+                        message=f'\nWriting of script file {merged_script} failed. Error={e}'
+                        logger.error(message)
+                        continue
+                    #
+                    # now executing the script/command
                     try: 
-                        #result=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
+                        #
+                        # the line just below is for submitting epicspeccombine directly to the shell, see above
+                        #result=subprocess.run(cmd,capture_output=True,check=True)
+                        #
+                        # running  the script
+                        cmd=['bash',merged_script]
+                        #cmd=['echo','$0']
                         result=subprocess.run(cmd,capture_output=True,check=True)
-                        print(f'      stdout=({result.stdout})')
+                        #print(f'      stdout=({result.stdout})')                            
                     except Exception as e:
                         print(f'      Error occured, class=({type(e)})')
                         print(f'      Error occured e=({e})')
@@ -209,7 +247,6 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                         continue
                     #
                     bkg_file=sp_dic['BACKFILE']                    
-                    continue
                 #
             else:
                 # only one input spectrum, no merging needed
@@ -222,13 +259,18 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                 #
                 sp_dic=spec_list[0][8]
                 sp_dic['SPECFILE']=merged_spectrum
+                in_files=[merged_spectrum.split('/')[-1]]
             #
-            # changing the extension of the merged spectrum to .grp for the binned spectrum
+            # Rebinning the merged spectrum
+            #
+            # changing the extension of the merged spectrum to .grp for namingthe binned spectrum
             binned_spectrum=os.path.splitext(merged_spectrum)[0]+'.grp'
+            # list of merged files
+            comment='Merged files: '+','.join(in_files)           
+            # rebinning the spectrum
+            spec_tuple=rebin_spectrum(merged_spectrum,binned_spectrum,log_file,mincts=1, background_file=bkg_file,comment=comment)
             #
-            # rebinning the spectrum, now with background file
-            spec_tuple=rebin_spectrum(merged_spectrum,binned_spectrum,log_file,mincts=1, background_file=bkg_file)
-            # adding to the tuple the instrument name and the dictionary with the updated filenames
+            # adding to the output tuple the instrument name and the dictionary with the updated filenames
             out_tuple = list(spec_tuple)
             out_tuple.append(spec_list[0][7])
             sp_dic['SPECFILE']=binned_spectrum
@@ -239,7 +281,10 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
             merged_spectra.append(spec_tuple)
         #
     #
-    message='n\nFinished merging spectra. Output results:'
+    message=f'\nList of files used for merging={in_files} '
+    logger.info(message)
+    message='\n\nFinished merging spectra. Output results:'
+    logger.info(message)                
     for spec_tuple in merged_spectra:
         message=f"        (merged and binned file, source counts, background counts, net counts, exposure time, flag, signal-to-noise ratio, instrument, filenames) = {spec_tuple} "
         logger.info(message)                
@@ -340,7 +385,45 @@ def test_merge_spectra():
     # signal-to-noise-ratio to check that chose the second MOS spectrum
     assert abs(mos_spectra[1][6]-merged_list[1][6])<=0.01
 
-    assert True
+    # === Test 6: only MOS, full run including merging ===
+    print("\n🔹 Test 6: only MOS, full run including merging")
+    #
+    # checking if epicspeccombine is installed, otherwise skipping this test
+    try:
+        cmd=['epicspeccombine','-h']
+        result=subprocess.run(cmd,capture_output=True,check=True)
+        # if it gets here epicspeccombine is defined, continuing with the test    
+        pn_spectra=[]
+        mos_spectra=[('./test_data/0760940101/pps/P0760940101M1S001SRSPEC0017.FTZ', 308, 14296, 63.03960341552707, 104469.411107063, 0, 2.6808126142724875,'MOS',M1_dic),('./test_data/0760940101/pps/P0760940101M2S002SRSPEC0017.FTZ', 236, 19138, 99.06503350999267, 105554.512163162, 0, 5.129840220900734,'MOS',M2_dic) ]
+        merged_list=merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1, test=True)
+        print("only MOS: merged_list ",merged_list)
+        # output list should have just one element, merging the two spectra above
+        assert len(merged_list)==1
+        name=merged_list[0][0].split('/')[-1]
+        assert name=='3067718060100029_MOS.grp'
+        # got the counts and SNR from the epicspeccombined file by hand, testing them below
+        spec_tuple = get_spectral_counts(merged_list[0][0],log_file)
+        # tot counts
+        assert spec_tuple[1] == 544
+        # bgd counts
+        assert spec_tuple[2] == 33434
+        # net counts
+        assert abs(spec_tuple[3] - 196.65) <= 0.01
+        # exposure time
+        assert abs(spec_tuple[4] - 105011.96) <= 0.01
+        # flag
+        assert spec_tuple[5] == 0
+        # signal-to-noise ratio
+        assert abs(spec_tuple[6] - 6.59) <= 0.01
+        # checking now that the dictionary is present and filled
+        assert len(merged_list[0][8])==4
+        # checking that the spec file is properly filled
+        assert merged_list[0][0]==merged_list[0][8]['SPECFILE']
+    except:
+        print('   epicspeccombine not defined, skipping this test')
+    #
+    #assert True
+    
     
 if __name__ == "__main__":
     test_merge_spectra()
