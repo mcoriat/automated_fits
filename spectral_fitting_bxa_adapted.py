@@ -134,13 +134,12 @@ def fit_spectrum_bxa(spectrum_file, background_file, rmf_file, arf_file,
                 logger.info(f'   Saved corner plot to file {os.path.join(output_dir, "corner.png")} ')
 
         # ===  Export results to FITS right after successful fit ===
-        #print('   Calling export_bxa_results... from fit_spectrum_bxa.py')
-        export_bxa_results_to_fits(
-            srcid=srcid,
-            output_base=output_base,
-            fits_filename="fit_results.fits",
-            log_file=log_file
-        )
+        # export_bxa_results_to_fits(
+        #     srcid=srcid,
+        #     output_base=output_base,
+        #     fits_filename="fit_results.fits",
+        #     log_file=log_file
+        # )
 
         posterior_median = np.median(samples_array, axis=0)
         posterior_p16    = np.percentile(samples_array, 16, axis=0)
@@ -170,9 +169,18 @@ MODEL_SHORT_NAMES = {
 
 
 
-def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filename="fit_results.fits", log_file="fit_spectrum_bxa.log"):
-    fits_path = os.path.join(output_base, fits_filename)
+def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filename="fit_results.fits", log_file="fit_spectrum_bxa.log", global_results=False):
+    # directory containing the fit results
     src_dir = os.path.join(output_base, str(srcid))
+    #
+    # generating filename to save the summary fit results to
+    if (global_results):
+        # adding them to a file including all previous results
+        fits_path = os.path.join(output_base, fits_filename)
+    else:
+        # adding/writing them to a file in the directory with the fit results
+        fits_path = os.path.join(src_dir, fits_filename)
+    #
     # print('\n\n Inside export...')
     # print(f'    output_base=({output_base})')
     # print(f'    fits_path=({fits_path})')
@@ -184,10 +192,12 @@ def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filena
     os.makedirs(output_base, exist_ok=True)
 
     # Get all models in SRCID directory
-    model_dirs = [d for d in os.listdir(src_dir) if os.path.isdir(os.path.join(src_dir, d))]
-    short_map = {"powerlaw": "PL", "blackbody": "BB", "bremss": "BR", "apec_single": "AP"}
-    model_data = {}
+    #    sorted so that, for each model, the last in the list is the latest fit
+    model_dirs = sorted( [d for d in os.listdir(src_dir) if os.path.isdir(os.path.join(src_dir, d))] )
 
+    short_map = {"powerlaw": "PL", "blackbody": "BB", "bremss": "BR", "apec_single": "AP"}
+
+    model_data = {}
     for mdir in model_dirs:
         for long_name, short_name in short_map.items():
             if mdir.startswith(long_name):
@@ -211,6 +221,7 @@ def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filena
         table = Table.read(fits_path)
         src_mask = table["SRCID"] == srcid
         if np.any(src_mask):
+            # table exists and data for srcid are already there, updating them
             idx = np.where(src_mask)[0][0]
             for model_short, pdata in model_data.items():
                 for pname, median, p16, p84 in zip(pdata["names"], pdata["medians"], pdata["p16"], pdata["p84"]):
@@ -222,6 +233,7 @@ def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filena
                             table[col] = np.full(len(table), np.nan)
                         table[col][idx] = val
         else:
+            # table exists, but data for srcid are not there yet, adding them
             new_row = {"SRCID": srcid}
             for model_short, pdata in model_data.items():
                 for pname, median, p16, p84 in zip(pdata["names"], pdata["medians"], pdata["p16"], pdata["p84"]):
@@ -234,6 +246,7 @@ def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filena
             table.add_row(new_row)
         table.write(fits_path, overwrite=True)
     else:
+        # table does not exist, creating it with the data for srcid
         row_data = {"SRCID": [srcid]}
         for model_short, pdata in model_data.items():
             for pname, median, p16, p84 in zip(pdata["names"], pdata["medians"], pdata["p16"], pdata["p84"]):
