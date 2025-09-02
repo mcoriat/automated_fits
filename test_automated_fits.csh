@@ -32,12 +32,13 @@ rehash ; python3 -u automated_fits.py 3040339010100035 ./test_data . ./test_data
 rehash ; python3 -u automated_fits.py 3070099010100059 ./test_data . ./test_data/RESPONSES ./test_data/tests ./test_data/test_catalogue.fits test_automated_fits_4.txt --use_bxa --model_name=blackbody --redshift=0.0 --overwrite=1 --export_results_fits >& test_automated_fits_4.log &
 #
 ### Test 5: existent srcid with 2 OBS_ID associated, 1 with no spectra and the other 0760940101 with no pn and MOS1 and MOS2 spectra SRC_NUM=81 (hex 51)
-#                  only MOS2 used because merging with M1 would reduce the SNR
+#                only MOS2 used because merging with M1 would reduce the SNR
 #           exit code 0 : OK
 #      test_data/tests/3067718060100132/3067718060100132_process_log_blackbody.txt
 rehash ; python3 -u automated_fits.py 3067718060100132 ./test_data . ./test_data/RESPONSES ./test_data/tests ./test_data/test_catalogue.fits test_automated_fits_5.txt --use_bxa --model_name=blackbody --redshift=0.0 --overwrite=1 --export_results_fits >& test_automated_fits_5.log &
 #
 ### Test 6: existent srcid with 2 OBS_ID associated, one with no spectra, and one 0760940101 with 1 pn and 2 MOS spectra SRC_NUM=23 (hex 17):
+#               MOS1 and MOS2 spectra merged successfully
 #                 the software has a feature, and it is that it fits separately the pn and merged-MOS spectra
 #                    the values written to the output FITS file are those for the last spectrum fitted
 #           exit code 0 : OK
