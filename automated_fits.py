@@ -119,7 +119,7 @@ def main():
     message=f'\n\n Getting the OBS_ID and SRCNUM associated to SRCID={srcid} in file {args.catalog}'
     logger.info(message)
     print(message)
-    srcid_obsid_mapping = read_stacked_catalog(args.catalog, srcid)
+    srcid_obsid_mapping = read_stacked_catalog(args.catalog, srcid, log_file)
     n_mapping=len(srcid_obsid_mapping)
     #print(f'\n\n   srcid_obsid_mapping={srcid_obsid_mapping}')
     if  n_mapping== 0:
