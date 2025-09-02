@@ -41,6 +41,8 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
     """
 
     message='\n\nMerging spectra'
+    logger.info(message)
+    print(message)
 
     merged_spectra=[]
 
@@ -62,6 +64,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
             instrument=spec_list[0][7]
             message=f'\n\nWorking on instrument {instrument} with {nspec} spectra\n\n'
             logger.info(message)
+            print(message)
              #
             # generating the merged spectrum filename
             outname='{}_{}.pha'.format(srcid,instrument)
@@ -131,6 +134,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                     line='\n      {:5d}  {:8.2f}  {:8.2f} {} {}'.format(i,snrs[i],cumsnrs[j],specs[i],merged)
                     message+=line
                 logger.info(message)
+                print(message)
                 if (test or len(in_files)==1):   
                     # just testing the algorithm above or just one spectrum to merge
                     #
@@ -143,6 +147,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                         text='Just one spectrum to merge'
                     message=f"\n   {text}: Output spectrum is just the input spectrum with the highest SNR {spec_list[i0][0]}, copying it to {merged_spectrum}"
                     logger.warning(message)
+                    print(message)
                     shutil.copy2(spec_list[i0][0],merged_spectrum)
                     sp_dic=spec_list[i0][8]
                     sp_dic['SPECFILE']=merged_spectrum
@@ -227,6 +232,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                         # writing the file failed
                         message=f'\n   Writing of script file {merged_script} failed. Error={e}'
                         logger.error(message)
+                        print(f'\n   ERROR: Writing of script file {merged_script} failed. Error={e}')
                         continue
                     #
                     # now executing the script/command
@@ -257,6 +263,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
                 # only one input spectrum, no merging needed
                 message=f"   Just one input spectrum {spec_list[0][0]}, copying it to {merged_spectrum}"
                 logger.warning(message)
+                print(message)
                 #
                 # generating a "merged" spectrum from the only input spectrum
                 #    by just copying it
@@ -275,6 +282,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
             # list of merged files
             comment='Merged files: '+','.join(in_files)
             logger.info(f'   {comment}')
+            print(f'   {comment}')
             # rebinning the spectrum
             spec_tuple=rebin_spectrum(merged_spectrum,binned_spectrum,log_file,mincts=1, background_file=bkg_file,comment=comment)
             #
@@ -293,11 +301,12 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1,
     #message=f'\nList of files used for merging={in_files} '
     #logger.info(message)
     message='\n\nFinished merging spectra. Output results:'
-    logger.info(message)                
+    logger.info(message)
+    print(message)                
     for spec_tuple in merged_spectra:
         message=f"        (merged and binned file, source counts, background counts, net counts, exposure time, flag, signal-to-noise ratio, instrument, filenames) = {spec_tuple} "
         logger.info(message)                
-
+        print(message)
     return merged_spectra
 
 
