@@ -8,9 +8,11 @@ import matplotlib.pyplot as plt
 import corner
 from astropy.table import Table, vstack
 import glob
+import logging
 
 # python3 automated_fits.py 3067718060100029 ./test_data . ./test_data/RESPONSES ./test_data/tests ./test_data/test_catalogue.fits dummy_output.txt --use_bxa --model_name=powerlaw --redshift=1.0 --overwrite=1 --export_results_fits --export_filename=fit_results.fits --bxa_output_dir=bxa_fit_results
 
+logger = logging.getLogger(__name__)
 
     
 def get_model_and_priors(model_name, redshift=0.0):
@@ -75,7 +77,17 @@ def get_model_and_priors(model_name, redshift=0.0):
 
 def fit_spectrum_bxa(spectrum_file, background_file, rmf_file, arf_file,
                      redshift=0.0, model_name="powerlaw",
-                     output_base="bxa_fit_results", srcid="unknown"):
+                     output_base="bxa_fit_results", srcid="unknown",log_file="fit_spectrum_bxa.log"):
+
+    logger.info('\n')
+    logger.info(f'Starting BXA fit on spectrum {spectrum_file}')
+    # changing focus to directory where the spectra are
+    dirname=os.path.dirname(spectrum_file)
+    os.chdir(dirname)
+    logger.info(f'   Changing focus to {dirname}')
+    
+    #
+
     AllData.clear()
     AllModels.clear()
 
@@ -93,8 +105,13 @@ def fit_spectrum_bxa(spectrum_file, background_file, rmf_file, arf_file,
 
     timestamp = datetime.datetime.now().strftime("%d%m%Y_%H%M")
     model_dirname = f"{model_name}_{timestamp}"
-    output_dir = os.path.join(output_base, str(srcid), model_dirname)
+    # this sent the output to a relative path wrt dirname
+    #output_dir = os.path.join(output_base, str(srcid), model_dirname)
+    # this sends the output to the same directory as the spectra, hopefully
+    output_dir = os.path.abspath(os.path.join(output_base, str(srcid), model_dirname))
+    #output_dir = os.path.join(output_base, model_dirname)
     os.makedirs(output_dir, exist_ok=True)
+    logger.info(f'   Setting the output directory for the fits {output_dir}')
 
     solver = bxa.BXASolver(transformations=priors_list,
                            outputfiles_basename=os.path.join(output_dir))
@@ -114,26 +131,33 @@ def fit_spectrum_bxa(spectrum_file, background_file, rmf_file, arf_file,
             if filtered_samples.shape[1] > 0:
                 fig = corner.corner(filtered_samples, labels=filtered_labels, show_titles=True, title_fmt=".3e")
                 fig.savefig(os.path.join(output_dir, "corner.png"))
-
-        posterior_median = np.median(samples_array, axis=0)
+                logger.info(f'   Saved corner plot to file {os.path.join(output_dir, "corner.png")} ')
 
         # ===  Export results to FITS right after successful fit ===
-        export_bxa_results_to_fits(
-            srcid=srcid,
-            output_base=output_base,
-            fits_filename="fit_results.fits"
-        )
+        # export_bxa_results_to_fits(
+        #     srcid=srcid,
+        #     output_base=output_base,
+        #     fits_filename="fit_results.fits",
+        #     log_file=log_file
+        # )
 
-
-
+        posterior_median = np.median(samples_array, axis=0)
+        posterior_p16    = np.percentile(samples_array, 16, axis=0)
+        posterior_p84    = np.percentile(samples_array, 84, axis=0)
         return {
             "parameter_names": labels,
             "posterior_median": posterior_median,
-            "output_dir": output_dir
+            "posterior_p16": posterior_p16,
+            "posterior_p84": posterior_p84,
+            "output_dir": output_dir,
+            "flag": 0
         }
 
     else:
-        raise RuntimeError("chain.fits file not found after BXA run")
+        return {"flag":4}
+        logger.info('\n\n')
+        logger.error(f'   Chain file {chain_file} not found after BXA run ')
+        #raise RuntimeError("chain.fits file not found after BXA run")
         
 
 MODEL_SHORT_NAMES = {
@@ -145,17 +169,35 @@ MODEL_SHORT_NAMES = {
 
 
 
-def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filename="fit_results.fits"):
-    fits_path = os.path.join(output_base, fits_filename)
+def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filename="fit_results.fits", log_file="fit_spectrum_bxa.log", global_results=False):
+    # directory containing the fit results
     src_dir = os.path.join(output_base, str(srcid))
+    #
+    # generating filename to save the summary fit results to
+    if (global_results):
+        # adding them to a file including all previous results
+        fits_path = os.path.join(output_base, fits_filename)
+    else:
+        # adding/writing them to a file in the directory with the fit results
+        fits_path = os.path.join(src_dir, fits_filename)
+    #
+    # print('\n\n Inside export...')
+    # print(f'    output_base=({output_base})')
+    # print(f'    fits_path=({fits_path})')
+    # print(f'    src_dir=({src_dir})')
+    
+    logger.info('\n')
+    logger.info(f'Exporting BXA fit results to FITS file {fits_path}')
 
     os.makedirs(output_base, exist_ok=True)
 
     # Get all models in SRCID directory
-    model_dirs = [d for d in os.listdir(src_dir) if os.path.isdir(os.path.join(src_dir, d))]
-    short_map = {"powerlaw": "PL", "blackbody": "BB", "bremss": "BR", "apec_single": "AP"}
-    model_data = {}
+    #    sorted so that, for each model, the last in the list is the latest fit
+    model_dirs = sorted( [d for d in os.listdir(src_dir) if os.path.isdir(os.path.join(src_dir, d))] )
 
+    short_map = {"powerlaw": "PL", "blackbody": "BB", "bremss": "BR", "apec_single": "AP"}
+
+    model_data = {}
     for mdir in model_dirs:
         for long_name, short_name in short_map.items():
             if mdir.startswith(long_name):
@@ -179,6 +221,7 @@ def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filena
         table = Table.read(fits_path)
         src_mask = table["SRCID"] == srcid
         if np.any(src_mask):
+            # table exists and data for srcid are already there, updating them
             idx = np.where(src_mask)[0][0]
             for model_short, pdata in model_data.items():
                 for pname, median, p16, p84 in zip(pdata["names"], pdata["medians"], pdata["p16"], pdata["p84"]):
@@ -190,6 +233,7 @@ def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filena
                             table[col] = np.full(len(table), np.nan)
                         table[col][idx] = val
         else:
+            # table exists, but data for srcid are not there yet, adding them
             new_row = {"SRCID": srcid}
             for model_short, pdata in model_data.items():
                 for pname, median, p16, p84 in zip(pdata["names"], pdata["medians"], pdata["p16"], pdata["p84"]):
@@ -202,6 +246,7 @@ def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filena
             table.add_row(new_row)
         table.write(fits_path, overwrite=True)
     else:
+        # table does not exist, creating it with the data for srcid
         row_data = {"SRCID": [srcid]}
         for model_short, pdata in model_data.items():
             for pname, median, p16, p84 in zip(pdata["names"], pdata["medians"], pdata["p16"], pdata["p84"]):

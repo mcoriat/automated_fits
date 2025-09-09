@@ -31,8 +31,8 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
     - output_dir (str): Directory to copy the good spectra, background, arf and rmf files to
     - log_file (str): The log file to write the messages.
     Returns:
-    - pn_spectra (list): A list of tuples containing the full path and name for the good pn spectra, total source counts, total background counts, total net counts, exposure time, a flag, the signal-to-noise ratio, and a string with the instrument
-    - mos_spectra (list): A list of tuples containing the full path and name for the good mos spectra, total source counts, total background counts, total net counts, exposure time, a flag, the signal-to-noise ratio, and a string with the instrument
+    - pn_spectra (list): A list of tuples containing the full path and name for the good pn spectra, total source counts, total background counts, total net counts, exposure time, a flag, the signal-to-noise ratio, a string with the instrument, and a dictionary containing the full path to the rmf,arf,bgd symbolic links
+    - mos_spectra (list): A list of tuples containing the full path and name for the good mos spectra, total source counts, total background counts, total net counts, exposure time, a flag, the signal-to-noise ratio, a string with the instrument, and a dictionary containing the full path to the rmf,arf,bgd symbolic links
 
     '''
 
@@ -69,9 +69,10 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
         sp_netcts=np.nan
         sp_exp=np.nan
         sp_snr=np.nan
+        sp_dic={}
         # Initializing output tuples, only used when no spectra suitable for fitting are found
-        pn_tuple=('',sp_counts,bg_counts,sp_netcts,sp_exp,-1,sp_snr,instrument)
-        mos_tuple=('',sp_counts,bg_counts,sp_netcts,sp_exp,-1,sp_snr,instrument)
+        pn_tuple=('',sp_counts,bg_counts,sp_netcts,sp_exp,-1,sp_snr,instrument,sp_dic)
+        mos_tuple=('',sp_counts,bg_counts,sp_netcts,sp_exp,-1,sp_snr,instrument,sp_dic)
         # background filename corresponding to the source
         background_file=spectrum_file.replace("SRSPEC","BGSPEC")
         #
@@ -95,23 +96,26 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
             # Check if the background spectrum exists
             #
             if (sp_flag==-1):
-                #     going for the next spectrum if it does not
+                # no valid bgd file, skipping this spectrum and going for the next in the list
                 message = f"       spectrum:{banner} - Missing background spectrum {background_file}"
                 logger.info(message)
                 continue
             else:
                 #
                 # bits below left almost as they were before using get_spectral_counts
-                #      not using sp_flag, left for future versions
+                #      not using sp_flag, left like this for clarity, but stating links to sp_flag values
                 #
                 if bg_counts > 0:
                     # Only proceed if background has counts
+                    #    this should correspond to sp_flag==0 or sp_flag==2
                     if sp_counts > 0:
                         # Only proceed if source spectrum has counts
+                        #    this should correspond to sp_flag==0 
                         #
                         # verifying now that the arf file exists
                         arf_file=spectrum_file.replace('SRSPEC','SRCARF')
                         if not os.path.exists(arf_file):
+                            # no valid arf file, skipping this spectrum,  and going for the next one in the list
                             message = f"       spectrum:{banner} - Missing arf file {arf_file}"
                             logger.info(message)
                             continue
@@ -122,7 +126,7 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
                             hdul.close()
                             del hdul
                             response=sp_header['RESPFILE']
-                            # full path to and name of rmf file depend on whetherpn/MOS
+                            # full path to and name of rmf file depend on whether pn/MOS
                             if (pn):
                                 # adding _v19.0 at the end of the root
                                 response19=response.split('.')[0]+'_v19.0.rmf'
@@ -134,6 +138,7 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
                             #
                             
                             if not os.path.exists(rmf_file):
+                                # no valid rmf file, skipping this spectrum and going for the next in the list
                                 message = f"       spectrum:{banner} - Missing rmf file {rmf_file}"
                                 logger.info(message)
                                 continue
@@ -147,28 +152,34 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
                                     #
                                     spectrum_fit=spectrum_file.split('/')[-1]
                                     spectrum_fit=os.path.join(output_dir,spectrum_fit)
-                                    #
-                                    # appending spectrum to be fitted to output list
-                                    out_tuple=(spectrum_fit,sp_counts,bg_counts,sp_netcts,sp_exp,0,sp_snr,instrument)
-                                    message=f"        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = {out_tuple} "
-                                    logger.info(message)
-                                    if (pn):
-                                        pn_spectra.append(out_tuple)
-                                    else:
-                                        mos_spectra.append(out_tuple)
-                                    #
                                     # linking spectrum, background and arf in output dir
-                                    for file in [spectrum_file, background_file, arf_file]:
+                                    filekeys=['SPECFILE','BACKFILE','ANCRFILE']
+                                    filenames=[spectrum_file, background_file, arf_file]
+                                    for m in range(len(filenames)):
+                                        file=filenames[m]
+                                        key=filekeys[m]
                                         fitfile=file.split('/')[-1]
                                         fitfile=os.path.join(output_dir,fitfile)
                                         if(os.path.islink(fitfile)):os.unlink(fitfile)
                                         os.symlink(file,fitfile)
+                                        sp_dic[key]=fitfile
                                     # 
                                     # rmf file has to be treated differently because
                                     #     its name for pn is harwired in header and is named differently
                                     rmf_fit=os.path.join(output_dir,response)
                                     if(os.path.islink(rmf_fit)):os.unlink(rmf_fit)
                                     os.symlink(rmf_file,rmf_fit)
+                                    sp_dic['RESPFILE']=rmf_fit
+                                    #
+                                    # appending spectrum to be fitted to output list
+                                    out_tuple=(spectrum_fit,sp_counts,bg_counts,sp_netcts,sp_exp,0,sp_snr,instrument,sp_dic)
+                                    if (pn):
+                                        pn_spectra.append(out_tuple)
+                                    else:
+                                        mos_spectra.append(out_tuple)
+                                    #
+                                    message=f"        (fit file, source counts, background counts, net counts, exposure time, flag, SNR, instrument) = {out_tuple} "
+                                    logger.info(message)
                                 else:
                                     message = f"       spectrum:{banner} - Source spectrum has <=0 net counts"
                                     logger.info(message)
@@ -177,13 +188,13 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
                                         # spectra with sp_counts>0 but sp_netcts<0 take precedence in output
                                         # and, among them, the latest to be processed
                                         pn_flag=2
-                                        pn_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,pn_flag,sp_snr,instrument)
+                                        pn_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,pn_flag,sp_snr,instrument,sp_dic)
                                     else:
                                         # always updating mos_tuple
                                         # spectra with sp_counts>0 but sp_netcts<0 take precedence in output
                                         # and, among them, the latest to be processed
                                         mos_flag=2
-                                        mos_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,mos_flag,sp_snr,instrument)
+                                        mos_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,mos_flag,sp_snr,instrument.sp_dic)
                                     #spectrum
                                     
                                 #
@@ -198,30 +209,30 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
                                 #      only spectra with <=0 total source counds found yet
                                 # spectra with sp_counts>0 but sp_netcts<0 take precedence in output
                                 pn_flag=2
-                                pn_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,pn_flag,sp_snr,instrument)
+                                pn_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,pn_flag,sp_snr,instrument,sp_dic)
                         else:
                             if (mos_flag<=1 or mos_flag[3]<=0):
                                 # only updating mos_tuple if only spectra with <=0 bgd counts or
                                 #      only spectra with <=0 total source counds found yet
                                 # spectra with sp_counts>0 but sp_netcts<0 take precedence in output
                                 mos_flag=2
-                                mos_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,mos_flag,sp_snr,instrument)
+                                mos_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,mos_flag,sp_snr,instrument,sp_dic)
                         #
                 else:
-                    # no background counts for this spectrum: updating the corresponding maximum
-                    #    flag and going for the next spectrum
+                    # no background counts for this spectrum: updating the corresponding maximum flag
+                    #    and going for the next spectrum
                     message = f"       spectrum:{banner} - Background spectrum has <=0 total counts"
                     logger.info(message)
                     if (pn):
                         if (pn_flag<=1):
                             # only updating pn_tuple if no pn spectra with >0 counts found yet
                             pn_flag=1
-                            pn_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,pn_flag,sp_snr,instrument)
+                            pn_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,pn_flag,sp_snr,instrument,sp_dic)
                     else:
                         if (mos_flag<=1):
                             # only updating mos_tuple if no MOS spectra with >0 counts found yet
                             mos_flag=1
-                            mos_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,mos_flag,sp_snr,instrument)
+                            mos_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,mos_flag,sp_snr,instrument,sp_dic)
 
                     #
                     continue
@@ -232,7 +243,7 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
     # if no pn spectra suitable for fitting, formatting output
     if (len(pn_spectra)==0 and pn_flag>0):
         # only enters here if no pn spectrum suitable for fitting is found
-        #    but at least one spectrum 
+        #    but at least one spectrum is present but unsuitable
         pn_spectra.append(pn_tuple)
     # otherwise, returning empty list
 
@@ -266,13 +277,20 @@ def test_check_spectra():
         print("  →", s)
     print(f"MOS spectra found: {len(mos_list)}")
 
+    # one good pn spectrum
     assert len(pn_list) == 1
+    # that spectrum is suitable for fitting
     assert pn_list[0][5] == 0
+    # the corresponding dictionary contains 4 items:
+    print('pn dictionary {} '.format(pn_list[0][8]))
+    assert len(pn_list[0][8])==4
+    # no MOS spectra suitable for fitting, flag=0
     assert len(mos_list) == 0
 
     net = 271.88
     tot = 766
     snr = net / np.sqrt(2 * tot - net)
+    # signal-to-noise ratio
     assert abs(pn_list[0][6] - snr) <= 0.01
 
     # === Test 2: MOS only ===
@@ -288,8 +306,11 @@ def test_check_spectra():
     for s in mos_list:
         print("  →", s)
 
+    # no pn spectra suitable for fitting
     assert len(pn_list) == 0
+    # two good MOS spectra
     assert len(mos_list) == 2
+    # those two spectra are suitable for fitting, flag=0
     assert mos_list[0][5] == 0
     assert mos_list[1][5] == 0
 
@@ -310,9 +331,33 @@ def test_check_spectra():
     for s in mos_list:
         print("  →", s)
 
+    # one good pn spectrum
     assert len(pn_list) == 1
+    # that spectrum is suitable for fitting, flag=0
     assert pn_list[0][5] == 0
+    # the corresponding dictionary contains 4 items:
+    print('pn dictionary {} '.format(pn_list[0][8]))
+    assert len(pn_list[0][8])==4
+    # the contents of the dictionary are correct
+    pn_dic=pn_list[0][8]
+    print(f"pn dictionary: {pn_dic}")
+    # removing the . at the beginning of output dir, if it is there
+    if (output_dir[0]=='.'):
+        out_dir=output_dir[1:]
+    else:
+        out_dir=output_dir
+    #
+    print('SPECFILE')
+    assert pn_dic['SPECFILE'].find(out_dir+'/P0760940101PNS003SRSPEC0017.FTZ')>0
+    print('BACKFILE')
+    assert pn_dic['BACKFILE'].find(out_dir+'/P0760940101PNS003BGSPEC0017.FTZ')>0
+    print('ANCRFILE')
+    assert pn_dic['ANCRFILE'].find(out_dir+'/P0760940101PNS003SRCARF0017.FTZ')>0
+    print('RESPFILE')
+    assert pn_dic['RESPFILE'].find(out_dir+'/epn_e3_ef20_sdY6.rmf')>0
+    # two good MOS spectra
     assert len(mos_list) == 2
+    # those two spectra are suitable for fitting, flag=0
     assert mos_list[0][5] == 0
     assert mos_list[1][5] == 0
 
