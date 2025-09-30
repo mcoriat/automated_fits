@@ -30,28 +30,22 @@ def perform_spectrum_fitting(args, srcid, log_file, good_spectra, output_dir):
     Returns:
     None
     """
-    if args.fit_pl:
-        fit_spectrum(srcid, good_spectra, args, "powerlaw", log_file, output_dir)
-    if args.fit_bb:
-        fit_spectrum(srcid, good_spectra, args, "blackbody", log_file, output_dir)
-    if args.fit_apec_single:
-        fit_spectrum(srcid, good_spectra, args, "apec_single", log_file, output_dir)
-    if args.fit_apec_apec:
-        fit_spectrum(srcid, good_spectra, args, "apec_apec", log_file, output_dir)
-    if args.fit_apec_apec_const:
-        fit_spectrum(srcid, good_spectra, args, "apec_apec_const", log_file, output_dir)
-    if args.fit_bremss:
-        fit_spectrum(srcid, good_spectra, args, "bremss", log_file, output_dir)
-    if args.fit_bbpl:
-        fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody", log_file, output_dir)
-    if args.fit_bbpl_const:
-        fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody_const", log_file, output_dir)
-    if args.fit_bbpl_const2:
-        fit_spectrum(srcid, good_spectra, args, "powerlaw_blackbody_const2", log_file, output_dir)
-    if args.fit_zpl:
-        fit_spectrum(srcid, good_spectra, args, "zpowlaw", log_file, output_dir)
-    if args.fit_zplpl:
-        fit_spectrum(srcid, good_spectra, args, "double_zpowlaw", log_file, output_dir)
+    # Use the model_name from args instead of individual boolean flags
+    model_name = args.model_name
+    
+    # Map model names to the internal model names used in fit_spectrum
+    model_mapping = {
+        'powerlaw': 'powerlaw',
+        'blackbody': 'blackbody', 
+        'apec_single': 'apec_single',
+        'bremss': 'bremss'
+    }
+    
+    # Get the mapped model name, defaulting to the original if not in mapping
+    mapped_model = model_mapping.get(model_name, model_name)
+    
+    # Perform the fitting with the specified model
+    fit_spectrum(srcid, good_spectra, args, mapped_model, log_file, output_dir)
 
 
 # Function to select the best spectrum based on SNR and perform fitting
@@ -197,4 +191,3 @@ def fit_with_bxa(srcid, spectrum_file, background_file, model_name, redshift, us
         # Log any errors encountered during the fitting process
         message = f" SRCID {srcid}: BXA fitting failed for spectrum {spectrum_file} with model {model_name}. Error: {str(e)}"
         logger.error(message)
-
