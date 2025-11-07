@@ -1,6 +1,7 @@
 import os
 import datetime
 from xspec import *
+Fit.query = "no"  # Disable interactive prompts during fits
 import bxa.xspec as bxa
 from astropy.io import fits
 import numpy as np
@@ -12,111 +13,202 @@ import logging
 
 # python3 automated_fits.py 3067718060100029 ./test_data . ./test_data/RESPONSES ./test_data/tests ./test_data/test_catalogue.fits dummy_output.txt --use_bxa --model_name=powerlaw --redshift=1.0 --overwrite=1 --export_results_fits --export_filename=fit_results.fits --bxa_output_dir=bxa_fit_results
 
-logger = logging.getLogger(__name__)
+#logger = logging.getLogger(__name__)
+logger = logging.getLogger()   # root logger
+
 
     
-def get_model_and_priors(model_name, redshift=0.0):
+def get_model_and_priors(model_name, redshift=0.0, flux_band=(0.5, 10.0)):
+    """
+    Construct an XSPEC model wrapped with cflux so that we fit for flux instead of norm.
+    Parameters
+    ----------
+    model_name : str
+        Name of the physical model ("powerlaw", "apec_single", "blackbody", "bremss").
+    redshift : float
+        Redshift for models that need it (e.g., zpowerlw).
+    flux_band : tuple
+        Energy band (Emin, Emax) in keV for cflux.
+    """
+
     if model_name == "powerlaw":
-        model = Model("phabs*zpowerlw")
+        model = Model("phabs*cflux*zpowerlw")
         model.zpowerlw.Redshift = redshift
         model.zpowerlw.Redshift.frozen = True
 
+        # set typical values
         model.phabs.nH.values = "0.05,,0.001,0.001,10.0,10.0"
         model.zpowerlw.PhoIndex.values = "2.0,,1.0,1.0,3.0,3.0"
-        model.zpowerlw.norm.values = "1e-4,,1e-6,1e-6,1e-2,1e-2"
 
-        priors = [
-            bxa.create_uniform_prior_for(model, model.phabs.nH),
-            bxa.create_uniform_prior_for(model, model.zpowerlw.PhoIndex),
-            bxa.create_loguniform_prior_for(model, model.zpowerlw.norm)
-        ]
+        # freeze the original norm (cflux will control the flux)
+        model.zpowerlw.norm.frozen = True
 
     elif model_name == "apec_single":
-        model = Model("phabs*apec")
+        model = Model("phabs*cflux*apec")
 
         model.phabs.nH.values = "0.05,,0.001,0.001,10.0,10.0"
         model.apec.kT.values = "1.0,,0.1,0.1,10.0,10.0"
-        model.apec.norm.values = "1e-4,,1e-6,1e-6,1e-2,1e-2"
-
-        priors = [
-            bxa.create_uniform_prior_for(model, model.phabs.nH),
-            bxa.create_uniform_prior_for(model, model.apec.kT),
-            bxa.create_loguniform_prior_for(model, model.apec.norm)
-        ]
+        model.apec.norm.frozen = True
 
     elif model_name == "blackbody":
-        model = Model("phabs*bbody")
+        model = Model("phabs*cflux*bbody")
 
         model.phabs.nH.values = "0.05,,0.001,0.001,10.0,10.0"
         model.bbody.kT.values = "0.1,,0.01,0.01,2.0,2.0"
-        model.bbody.norm.values = "1e-4,,1e-6,1e-6,1e-2,1e-2"
-
-        priors = [
-            bxa.create_uniform_prior_for(model, model.phabs.nH),
-            bxa.create_uniform_prior_for(model, model.bbody.kT),
-            bxa.create_loguniform_prior_for(model, model.bbody.norm)
-        ]
+        model.bbody.norm.frozen = True
 
     elif model_name == "bremss":
-        model = Model("phabs*bremss")
+        model = Model("phabs*cflux*bremss")
 
         model.phabs.nH.values = "0.05,,0.001,0.001,10.0,10.0"
         model.bremss.kT.values = "5.0,,0.1,0.1,20.0,20.0"
-        model.bremss.norm.values = "1e-4,,1e-6,1e-6,1e-2,1e-2"
-
-        priors = [
-            bxa.create_uniform_prior_for(model, model.phabs.nH),
-            bxa.create_uniform_prior_for(model, model.bremss.kT),
-            bxa.create_loguniform_prior_for(model, model.bremss.norm)
-        ]
+        model.bremss.norm.frozen = True
 
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
+    # Configure cflux energy range
+    model.cflux.Emin = flux_band[0]
+    model.cflux.Emax = flux_band[1]
+
+    # Typical starting value for flux (erg/cm^2/s)
+    model.cflux.Flux.values = "1e-12,,1e-15,1e-15,1e-9,1e-9"
+
+    # Priors: always include flux instead of norm
+    priors = [
+        bxa.create_uniform_prior_for(model, model.phabs.nH),
+    ]
+
+    # Add temperature / index depending on model
+    if model_name == "powerlaw":
+        priors.append(bxa.create_uniform_prior_for(model, model.zpowerlw.PhoIndex))
+    elif model_name == "apec_single":
+        priors.append(bxa.create_uniform_prior_for(model, model.apec.kT))
+    elif model_name == "blackbody":
+        priors.append(bxa.create_uniform_prior_for(model, model.bbody.kT))
+    elif model_name == "bremss":
+        priors.append(bxa.create_uniform_prior_for(model, model.bremss.kT))
+
+    # Finally, flux prior
+    priors.append(bxa.create_loguniform_prior_for(model, model.cflux.Flux))
+
     return model, priors
+    
+    
+# === NEW: unified background check that always returns flag=3 on any problem ===
+def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
+                         model_name, redshift, logger, srcid="unknown"):
+    """
+    Returns:
+      pval (float) if background is OK (>= 0.01),
+      None if background cannot be fit or p<0.01 or any exception occurred.
+    """
+    from xspec import AllData, AllModels, Fit, Spectrum
+    import numpy as np
+    try:
+        # Clean local XSPEC state for the quick test
+        AllData.clear()
+        AllModels.clear()
+
+        spectra = []
+        for i in range(len(spectrum_files)):
+            s = Spectrum(spectrum_files[i])
+            s.background = background_files[i]
+            s.response = rmf_files[i]
+            s.response.arf = arf_files[i]
+            spectra.append(s)
+
+        AllData.ignore("**-0.3 10.0-**")
+
+
+        # Build the same model you’ll use (so the set-up is consistent),
+        # but *do not* run BXA here—just a quick XSPEC fit to get p-value.
+        # Re-use your existing helper:
+        try:
+            _model, _priors = get_model_and_priors(model_name, redshift)
+        except Exception as e:
+            logger.warning(f"   Background check: could not build model for {srcid}: {e}")
+            return None
+
+        # Perform a quick local fit
+        Fit.perform()
+
+        # Convert the fit test statistic to a p-value (approximate; same logic as before)
+        try:
+            from scipy.stats import chi2
+            bg_stat = Fit.testStatistic()
+            dof = Fit.dof
+            pval = 1.0 - chi2.cdf(bg_stat, dof)
+        except Exception as e:
+            logger.warning(f"   Background check: cannot compute p-value for {srcid}: {e}")
+            return None
+
+        if (pval is None) or (not np.isfinite(pval)) or (pval < 0.01):
+            logger.warning(f"   Background check: p={pval:.4f} (<0.01) → NOT OK for {srcid}")
+            return None
+
+        logger.info(f"   Background check: p={pval:.4f} → OK for {srcid}")
+        return pval
+
+    except Exception as e:
+        logger.warning(f"   Background check failed for {srcid}: {e}")
+        return None
+
+
 
 def fit_spectrum_bxa(spectrum_file, background_file, rmf_file, arf_file,
                      redshift=0.0, model_name="powerlaw",
-                     output_base="bxa_fit_results", srcid="unknown",log_file="fit_spectrum_bxa.log"):
+                     output_base="bxa_fit_results", srcid="unknown", log_file="fit_spectrum_bxa.log"):
 
     logger.info('\n')
     logger.info(f'Starting BXA fit on spectrum {spectrum_file}')
-    # changing focus to directory where the spectra are
-    dirname=os.path.dirname(spectrum_file)
+    dirname = os.path.dirname(spectrum_file)
     os.chdir(dirname)
     logger.info(f'   Changing focus to {dirname}')
-    
-    #
 
+    # === NEW: unified background gate (flag=3 on any problem) ===
+    pval = check_background_fit(
+        spectrum_file, background_file, rmf_file, arf_file,
+        model_name, redshift, logger, srcid=str(srcid)
+    )
+    if pval is None:
+        # Any failure (no bkg, could not fit, or p<0.01) → flag 3 and bail out
+        return {"flag": 3}
+
+    # === From here on, your original working fitting code ===
     AllData.clear()
     AllModels.clear()
 
     Fit.statMethod = "cstat"
     Plot.device = "/null"
 
-    s = Spectrum(spectrum_file)
-    s.background = background_file
-    s.response = rmf_file
-    s.response.arf = arf_file
+    spectra = []
+    for i in range(len(spectrum_files)):
+        s = Spectrum(spectrum_files[i])
+        s.background = background_files[i]
+        s.response = rmf_files[i]
+        s.response.arf = arf_files[i]
+        spectra.append(s)
 
-    s.ignore("**-0.3 10.0-**")
+    AllData.ignore("**-0.3 10.0-**")
 
+
+    # Model + priors
     model, priors_list = get_model_and_priors(model_name, redshift)
 
+    # Output dir
     timestamp = datetime.datetime.now().strftime("%d%m%Y_%H%M")
     model_dirname = f"{model_name}_{timestamp}"
-    # this sent the output to a relative path wrt dirname
-    #output_dir = os.path.join(output_base, str(srcid), model_dirname)
-    # this sends the output to the same directory as the spectra, hopefully
     output_dir = os.path.abspath(os.path.join(output_base, str(srcid), model_dirname))
-    #output_dir = os.path.join(output_base, model_dirname)
     os.makedirs(output_dir, exist_ok=True)
     logger.info(f'   Setting the output directory for the fits {output_dir}')
 
+    # Run BXA
     solver = bxa.BXASolver(transformations=priors_list,
                            outputfiles_basename=os.path.join(output_dir))
     solver.run(resume=False)
 
+    # Read chain, make plots, return summaries
     chain_file = os.path.join(output_dir, "chain.fits")
     if os.path.exists(chain_file):
         with fits.open(chain_file) as hdul:
@@ -130,16 +222,9 @@ def fit_spectrum_bxa(spectrum_file, background_file, rmf_file, arf_file,
 
             if filtered_samples.shape[1] > 0:
                 fig = corner.corner(filtered_samples, labels=filtered_labels, show_titles=True, title_fmt=".3e")
-                fig.savefig(os.path.join(output_dir, "corner.png"))
-                logger.info(f'   Saved corner plot to file {os.path.join(output_dir, "corner.png")} ')
-
-        # ===  Export results to FITS right after successful fit ===
-        # export_bxa_results_to_fits(
-        #     srcid=srcid,
-        #     output_base=output_base,
-        #     fits_filename="fit_results.fits",
-        #     log_file=log_file
-        # )
+                corner_path = os.path.join(output_dir, "corner.png")
+                fig.savefig(corner_path)
+                logger.info(f'   Saved corner plot to file {corner_path} ')
 
         posterior_median = np.median(samples_array, axis=0)
         posterior_p16    = np.percentile(samples_array, 16, axis=0)
@@ -154,19 +239,8 @@ def fit_spectrum_bxa(spectrum_file, background_file, rmf_file, arf_file,
         }
 
     else:
-        return {"flag":4}
-        logger.info('\n\n')
         logger.error(f'   Chain file {chain_file} not found after BXA run ')
-        #raise RuntimeError("chain.fits file not found after BXA run")
-        
-
-MODEL_SHORT_NAMES = {
-    "powerlaw": "PL",
-    "blackbody": "BB",
-    "bremss": "BR",
-    "apec_single": "AS"
-}
-
+        return {"flag": 4}
 
 
 def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filename="fit_results.fits", log_file="fit_spectrum_bxa.log", global_results=False):

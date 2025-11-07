@@ -38,10 +38,11 @@ from list_spectra import list_spectra
 from check_spectra import check_spectra
 from merge_spectra import merge_spectra
 from spectral_fitting import perform_spectrum_fitting
-from spectral_fitting_bxa_adapted import fit_spectrum_bxa, export_bxa_results_to_fits
+from spectral_fitting_bxa_adapted import fit_spectrum_bxa, export_bxa_results_to_fits, check_background_fit
+
 
 logger = logging.getLogger(__name__)
-  
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -72,65 +73,56 @@ def main():
     parser.add_argument("--use_xmmsas_version_new", action="store_true", help="use new xmmsas version")
     parser.add_argument("--overwrite", type=int, default=1, help="overwrite existing model")
     parser.add_argument("--use_bxa", action="store_true", help="use BXA fitting instead of XSPEC")
-#    parser.add_argument("--bxa_output_dir", type=str, default="bxa_fit_results",
-#                    help="Directory to store BXA results (default: bxa_fit_results)")
     parser.add_argument("--export_results_fits", action="store_true", help="Export BXA fit results to updated FITS file")
     parser.add_argument("--export_filename", default="fit_results.fits", help="Optional output filename for exported FITS results")
     args = parser.parse_args()
-    #
 
     srcid = int(args.srcid)
     message = ''
-    #
+
     output_dir=os.path.abspath(args.output_dir)
     if not os.path.exists(output_dir):
         message = f'\n Creating directory {output_dir}'
         os.mkdir(output_dir)
-    #
+
     src_dir = os.path.join(output_dir, f'{srcid}')
     if not os.path.exists(src_dir):
         message += f'\n Creating subdirectory {src_dir}'
         os.mkdir(src_dir)
-    #
+
     log_file = os.path.join(src_dir, f"{srcid}_process_log_{args.model_name}.txt")
     open(log_file, 'w').close()
     logging.basicConfig(filename=log_file, level=logging.INFO, filemode='w', force=True)
     if message:
         logger.warning(message)
-    #
+
     logger.info(f'\n\n The initial name of this logger file is {log_file}')
-    
-    
-    # Writing out to log file the status of all the input arguments
+
+    # Arguments
     logger.info('\n\n Values of all the input arguments for this run')
     print('\n\n Values of all the input arguments for this run')
     for arg in vars(args):
         logger.info(f'    {arg} = {getattr(args,arg)} ')
         print(f'    {arg} = {getattr(args,arg)} ')
 
-
-    # Starting processing
+    # Start
     message=f'\n\n\n Working on SRCID {srcid} '
     logger.info(message)
     print(message)
-    
-    
-    # getting from the catalogue the list of obs_id,srcnum that correspond to that srcid
+
+    # Catalogue
     message=f'\n\n Getting the OBS_ID and SRCNUM associated to SRCID={srcid} in file {args.catalog}'
     logger.info(message)
     print(message)
     srcid_obsid_mapping = read_stacked_catalog(args.catalog, srcid, log_file)
     n_mapping=len(srcid_obsid_mapping)
-    #print(f'\n\n   srcid_obsid_mapping={srcid_obsid_mapping}')
     if  n_mapping== 0:
-        logger.info('\n\n')
         logger.error(f"   SRCID {srcid} not found \n\n")
         print(f"\n\n   ERROR 1: SRCID={srcid} not found \n\n")
         sys.exit(1)
     else:
         n_pairs=len(srcid_obsid_mapping[srcid])
         if (n_pairs==0):
-            logger.info('\n\n')
             logger.error(f'    There are not OBS_ID,SRC_NUM pairs for SRCID={srcid} \n\n')
             print(f'\n\n    ERROR 2: There are not OBS_ID,SRC_NUM pairs for SRCID={srcid} \n\n')
             sys.exit(2)
@@ -140,8 +132,7 @@ def main():
             print(f'    {n_pairs} OBS_ID,SRC_NUM pairs found for SRCID={srcid} ')
             print(f'        {srcid_obsid_mapping}')
 
-
-    # finding which of those combinations actually correspond to existing spectra on disk
+    # Spectra
     logger.info('\n\n Finding which of those combinations correspond to existing spectra on disk')
     srcid_list_spectra = list_spectra(srcid, srcid_obsid_mapping, args.data_dir, log_file)
     nspec = len(srcid_list_spectra)
@@ -151,146 +142,140 @@ def main():
         print(f'   {nspec} spectra found for SRCID {srcid}')
         print(f'       {srcid_list_spectra}')
     else:
-        logger.info('\n\n')
         logger.error(f' No spectra found for SRCID {srcid}\n\n')
         print(f'\n\n    ERROR 3: No spectra found for SRCID={srcid}\n\n')
         sys.exit(3)
 
-
-    # finding which of those spectra correspond to each instrument, and checking their counts
+    # Good spectra
     logger.info('\n\n Finding which of those spectra are suitable for fitting')
     print('\n\n Finding which of those spectra are suitable for fitting')
     pn_list, mos_list = check_spectra(srcid_list_spectra, args.responses_dir, src_dir, log_file)
-    #
+
     pn_good=[spec_tuple for spec_tuple in pn_list if spec_tuple[5] == 0]
-    npn=len(pn_list)
-    npn_good=len(pn_good)
+    npn=len(pn_list); npn_good=len(pn_good)
     logger.info(f'    pn: {npn} spectra found, of which {npn_good} are suitable for fitting')
     print(f'    pn: {npn} spectra found, of which {npn_good} are suitable for fitting')
-    #
+
     mos_good=[spec_tuple for spec_tuple in mos_list if spec_tuple[5] == 0]
-    nmos=len(mos_list)
-    nmos_good=len(mos_good)
+    nmos=len(mos_list); nmos_good=len(mos_good)
     logger.info(f'   MOS: {nmos} spectra found, of which {nmos_good} are suitable for fitting')
     print(f'   MOS: {nmos} spectra found, of which {nmos_good} are suitable for fitting')
-    #
-    if (npn==0):
-        # no pn spectra
-        pn_flag=-1
-    elif (npn==1 and npn_good==0):
-        # no good spectra, getting the flag from the "best" (but still bad) spectrum
-        pn_best=pn_list[0]
-        pn_flag=pn_best[5]       
-    else:
-        # all good so far
-        pn_flag=0
-    #
-    if (nmos==0):
-        # no mos spectra
-        mos_flag=-1
-    elif (nmos==1 and nmos_good==0):
-        # no good spectra, getting the flag from the "best" (but still bad) spectrum
-        mos_best=mos_list[0]
-        mos_flag=mos_best[5]
-    else:
-        # all good so far
-        mos_flag=0
-    #
+
     if (npn_good+nmos_good==0):
-        logger.info('\n\n')
         logger.error(f' No spectra suitable for fitting found for SRCID {srcid}')
-        logger.error(f'    pn_flag={pn_flag}  mos_flag={mos_flag} \n\n')
-        print(f'\n\n    ERROR 4: No spectra suitable for fitting found for SRCID {srcid}')
-        print(f'             pn_flag={pn_flag}  mos_flag={mos_flag}\n\n')
-        # provisional solution
-        # ideally a line for this ID with the data for this spectrum should be written
-        #    to an output file, to be merged into an output catalogue of all spectral fits
+        print(f'\n\n    ERROR 4: No spectra suitable for fitting found for SRCID {srcid}\n\n')
         sys.exit(4)
-        
-    
-    # merging the spectra, if there is more than one for any instrument
-    #    merge_spectra checks for empty lists, or lists only with not good spectra
+
+    # Merge
     logger.info('\n\n Selecting which spectra to merge for each instrument and merging them')
     print('\n\n Selecting which spectra to merge for each instrument and merging them')
     merged_list = merge_spectra(pn_list, mos_list, srcid, src_dir, log_file, mincts=1)
-    #
-    merged_list_pn=[spec_tuple for spec_tuple in merged_list if spec_tuple[7]=='pn']
-    merged_list_pn_good=[spec_tuple for spec_tuple in merged_list_pn if spec_tuple[5]==0]
-    npn_merged=len(merged_list_pn)
-    npn_merged_good=len(merged_list_pn_good)
-    logger.info(f'    pn: {npn_merged} spectra merged, of which {npn_merged_good} are suitable for fitting')
-    print(f'    pn: {npn_merged} spectra merged, of which {npn_merged_good} are suitable for fitting')
-    if (npn_merged_good==0 and pn_flag==0): pn_flag==3
-    #
-    merged_list_mos=[spec_tuple for spec_tuple in merged_list if spec_tuple[7]=='MOS']
-    merged_list_mos_good=[spec_tuple for spec_tuple in merged_list_mos if spec_tuple[5]==0]
-    nmos_merged=len(merged_list_mos)
-    nmos_merged_good=len(merged_list_mos_good)
-    logger.info(f'   MOS: {nmos_merged} spectra merged, of which {nmos_merged_good} are suitable for fitting')
-    print(f'   MOS: {nmos_merged} spectra merged, of which {nmos_merged_good} are suitable for fitting')
-    if (nmos_merged_good==0 and mos_flag==0): mos_flag==3
-    #
-    #
-    if (npn_merged_good+nmos_merged_good==0):
-        logger.info('\n\n')
+
+    merged_list_good=[spec_tuple for spec_tuple in merged_list if spec_tuple[5]==0]
+    if len(merged_list_good)==0:
         logger.error(f' No merged spectra suitable for fitting found for SRCID {srcid}')
-        logger.error(f'    pn_flag={pn_flag}  mos_flag={mos_flag} \n\n')
-        print(f'\n\n    ERROR 5: No merged spectra suitable for fitting found for SRCID {srcid}')
-        print(f'               pn_flag={pn_flag}  mos_flag={mos_flag}\n\n')
-        # provisional solution
-        # ideally a line for this ID with the data for this spectrum should be written
-        #    to an output file, to be merged into an output catalogue of all spectral fits
+        print(f'\n\n    ERROR 5: No merged spectra suitable for fitting found for SRCID {srcid}\n\n')
         sys.exit(5)
-    
 
+    fit_list = merged_list_good
 
-    # selecting only the good spectra, after merging
-    fit_list = [spec_tuple for spec_tuple in merged_list if spec_tuple[5] == 0]
-
-
-    # now going for the fits
-    #
+    # Fits
     logger.info('\n\n Starting the fits')
     print('\n\n Starting the fits')
     all_fit_results = []
-    if args.use_bxa:
-        for spec in fit_list:
-            # getting from the dictionary in the tuple the filenames
-            sp_dic=spec[8]
-            spectrum_file = sp_dic['SPECFILE']
-            bkg_file = sp_dic['BACKFILE']
-            rmf_file = sp_dic['RESPFILE']
-            arf_file = sp_dic['ANCRFILE']
-            #
-            #print("\n   Starting BXA fit for:", spectrum_file)
-            results = fit_spectrum_bxa(
-                spectrum_file, bkg_file, rmf_file, arf_file,
-                redshift=args.redshift,
-                model_name=args.model_name,
-                srcid=srcid,
-                output_base=output_dir,
-                log_file=log_file
-            )
-            # analysing results
-            if (results['flag']==0):
-                message="\n\nFit completed successfully "
-                all_fit_results.append(results)
-                for par, med, p16, p84 in zip(results["parameter_names"], results["posterior_median"], results["posterior_p16"], results["posterior_p84"]):
-                    message+=f"\n   {par} (median [percentiles 16,84]): {med:.3e} [{p16:.3e},{p84:.3e}]"
-                print(message)
-                logger.info(message)
-            else:
-                logger.info('\n\n')
-                message=f'\n\nFit failed with flag={results["flag"]} \n\n '
-                logger.error(message)
-                print(f'\n\n    ERROR 6: Fit failed with flag={results["flag"]} \n\n')
-                sys.exit(6)
 
-        #
-        # single exporting of results after all fits
+    if args.use_bxa:
+        if len(fit_list) == 0:
+            logger.error(f"   No good spectra available for simultaneous fitting for source {srcid}")
+            sys.exit(5)
+
+        spectrum_files = []
+        background_files = []
+        rmf_files = []
+        arf_files = []
+        
+        
+        # === NEW: pre-filter instruments by unified background gate (flag=3 logic) ===
+        valid_specs = []
+        for spec in fit_list:
+            sp_dic = spec[8]
+            spectrum_file = sp_dic['SPECFILE']
+            bkg_file      = sp_dic['BACKFILE']
+            rmf_file      = sp_dic['RESPFILE']
+            arf_file      = sp_dic['ANCRFILE']
+
+            inst = spec[7] if len(spec) > 7 else "unknown"
+
+            logger.info(f"   Checking background for instrument {inst} (SRCID {srcid})")
+            pval = check_background_fit(spectrum_file, bkg_file, rmf_file, arf_file,
+                                    args.model_name, args.redshift, logger, srcid=str(srcid))
+            if pval is None:
+                logger.warning(f"   Background NOT OK for {inst} → skipping this instrument")
+            else:
+                valid_specs.append(spec)
+
+        # Decision logic: if nothing survives, flag source as 3 and stop
+        if not valid_specs:
+            logger.warning(f"   No valid instruments left after background check → flagging SRCID {srcid} as 3")
+            print(f"   Skipping source {srcid} (flag=3)")
+            # keep your existing behavior: stop this srcid but continue overall
+            return
+        # Otherwise, use only valid_specs for fitting
+        fit_list = valid_specs
+
+
+        for spec in fit_list:
+            sp_dic = spec[8]
+            spectrum_files.append(sp_dic['SPECFILE'])
+            background_files.append(sp_dic['BACKFILE'])
+            rmf_files.append(sp_dic['RESPFILE'])
+            arf_files.append(sp_dic['ANCRFILE'])
+
+        logger.info(f"   Performing simultaneous BXA fit for source {srcid} using {len(spectrum_files)} spectra:")
+        print(f"   Performing simultaneous BXA fit for source {srcid} using {len(spectrum_files)} spectra:")
+
+        for sf in spectrum_files:
+            logger.info(f"      Spectrum file: {sf}")
+            print(f"      Spectrum file: {sf}")
+
+
+        results = fit_spectrum_bxa(
+            spectrum_files=spectrum_files,
+            background_files=background_files,
+            rmf_files=rmf_files,
+            arf_files=arf_files,
+            redshift=args.redshift,
+            model_name=args.model_name,
+            srcid=srcid,
+            output_base=output_dir,
+            log_file=log_file
+        )
+
+        # --- Unified background failure handling ---
+        if results.get("flag", 0) == 3:
+            logger.warning(f"   Skipping source {srcid} due to background failure (unified flag=3).")
+            print(f"   Skipping source {srcid} due to background failure (flag=3).")
+            return
+
+        if results.get("flag", 0) == 0:
+            message = "\n\nFit completed successfully "
+            all_fit_results.append(results)
+            for par, med, p16, p84 in zip(results["parameter_names"],
+                                          results["posterior_median"],
+                                          results["posterior_p16"],
+                                          results["posterior_p84"]):
+                message += f"\n   {par} (median [percentiles 16,84]): {med:.3e} [{p16:.3e},{p84:.3e}]"
+            print(message)
+            logger.info(message)
+        else:
+            logger.info('\n\n')
+            message = f'\n\nFit failed with flag={results["flag"]} \n\n '
+            logger.error(message)
+            print(f'\n\n    ERROR 6: Fit failed with flag={results["flag"]} \n\n')
+            sys.exit(6)
+
         if args.export_results_fits:
-            #print('   Calling export_bxa_results... from automated_fits.py')
-            export_bxa_results_to_fits(srcid, output_dir, args.export_filename,log_file=log_file,global_results=True)
+            export_bxa_results_to_fits(srcid, output_dir, args.export_filename, log_file=log_file, global_results=True)
 
     else:
         perform_spectrum_fitting(args, srcid, log_file, fit_list, output_dir)
