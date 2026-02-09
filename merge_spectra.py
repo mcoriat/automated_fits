@@ -116,8 +116,12 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1)
                 'RESPFILE': rmf_file,
                 'ANCRFILE': arf_file
             }
-            # extend the 7-element tuple with instrument and sp_dic
-            spec_tuple = spec_tuple + (instrument, sp_dic)
+            # strip header_info (index 7 from get_spectral_counts)
+            # and extend with instrument and sp_dic so that
+            # the final tuple is:
+            #   (file, counts, bg, net, exp, flag, snr,
+            #    instrument, sp_dic)
+            spec_tuple = spec_tuple[:7] + (instrument, sp_dic)
             merged_spectra.append(spec_tuple)
         #
     #

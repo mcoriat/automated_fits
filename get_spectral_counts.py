@@ -52,7 +52,8 @@ def get_spectral_counts(infile,log_file,background_file=''):
     sp_netcts=np.nan
     sp_exp=np.nan
     sp_snr=np.nan
-    
+    header_info={}
+
     # trying to open the input file
     try:
         hdul=fits.open(infile)
@@ -62,6 +63,11 @@ def get_spectral_counts(infile,log_file,background_file=''):
         sp_exp=hdul[1].header['EXPOSURE']
         # background file name in the input file
         bgd_file=hdul[1].header['backfile']
+        # extra header keywords needed downstream (avoids re-opening the file)
+        header_info={
+            'RESPFILE': hdul[1].header.get('RESPFILE', ''),
+            'SPECDELT': hdul[1].header.get('SPECDELT', None)
+        }
         #
         hdul.close()
         del hdul
@@ -112,7 +118,7 @@ def get_spectral_counts(infile,log_file,background_file=''):
         logger.info(message)
         flag=-2
     #
-    return (infile,sp_counts,bg_counts,sp_netcts,sp_exp,flag,sp_snr)
+    return (infile,sp_counts,bg_counts,sp_netcts,sp_exp,flag,sp_snr,header_info)
 
 
 def test_get_spectral_counts():

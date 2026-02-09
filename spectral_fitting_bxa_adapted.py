@@ -323,3 +323,117 @@ def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filena
                 row_data[f"{model_short}_{pname}_p84"] = [p84]
         Table(row_data).write(fits_path, overwrite=True)
 
+
+def export_bxa_results_to_fits_bulk(
+        accumulated_results, output_base="bxa_fit_results",
+        fits_filename="fit_results.fits",
+        partial_flush_every=10000):
+    """
+    Write all BXA fit results in one pass — O(N) not O(N²).
+
+    Instead of reading-modifying-writing the FITS table for
+    each source (which becomes catastrophically slow at 818K
+    sources), this function builds the entire table in memory
+    and writes it once.
+
+    For crash safety on very long runs, partial files are
+    flushed every `partial_flush_every` sources.
+
+    Parameters:
+    - accumulated_results: list of (srcid, results_dict)
+        where results_dict has keys 'parameter_names',
+        'posterior_median', 'posterior_p16', 'posterior_p84'.
+    - output_base (str): Top output directory.
+    - fits_filename (str): Output FITS filename.
+    - partial_flush_every (int): Flush partial file every
+        N sources for crash safety.
+    """
+    logger.info(
+        f'\nBulk exporting {len(accumulated_results)} '
+        f'BXA results to {fits_filename}')
+
+    os.makedirs(output_base, exist_ok=True)
+    fits_path = os.path.join(output_base, fits_filename)
+
+    # Collect all unique column names first
+    all_columns = set()
+    for srcid, results in accumulated_results:
+        if results is None:
+            continue
+        for pname in results.get("parameter_names", []):
+            all_columns.add(f"{pname}_median")
+            all_columns.add(f"{pname}_p16")
+            all_columns.add(f"{pname}_p84")
+
+    # Build rows
+    rows = []
+    for i, (srcid, results) in enumerate(
+            accumulated_results):
+        if results is None:
+            continue
+        row = {"SRCID": srcid}
+        pnames = results.get("parameter_names", [])
+        medians = results.get("posterior_median", [])
+        p16s = results.get("posterior_p16", [])
+        p84s = results.get("posterior_p84", [])
+
+        for pname, med, lo, hi in zip(
+                pnames, medians, p16s, p84s):
+            row[f"{pname}_median"] = float(med)
+            row[f"{pname}_p16"] = float(lo)
+            row[f"{pname}_p84"] = float(hi)
+
+        # Fill missing columns with NaN
+        for col in all_columns:
+            if col not in row:
+                row[col] = np.nan
+
+        rows.append(row)
+
+        # Partial flush for crash safety
+        if (partial_flush_every > 0 and
+                len(rows) % partial_flush_every == 0):
+            part_num = len(rows) // partial_flush_every
+            partial_path = os.path.join(
+                output_base,
+                f"{os.path.splitext(fits_filename)[0]}"
+                f"_partial_{part_num:04d}.fits")
+            _write_rows_to_fits(rows, partial_path)
+            logger.info(
+                f"   Partial flush: {len(rows)} rows "
+                f"→ {partial_path}")
+
+    if len(rows) == 0:
+        logger.warning(
+            "   No valid results to export in bulk mode")
+        return
+
+    # Final write
+    _write_rows_to_fits(rows, fits_path)
+    logger.info(
+        f'   Bulk export complete: {len(rows)} rows '
+        f'→ {fits_path}')
+
+
+def _write_rows_to_fits(rows, fits_path):
+    """Helper to write a list of row dicts to a FITS table."""
+    if len(rows) == 0:
+        return
+
+    # Collect all column names
+    all_cols = set()
+    for row in rows:
+        all_cols.update(row.keys())
+
+    # Build column arrays
+    col_data = {}
+    for col in sorted(all_cols):
+        if col == "SRCID":
+            col_data[col] = [row.get(col, 0) for row in rows]
+        else:
+            col_data[col] = [
+                row.get(col, np.nan) for row in rows]
+
+    table = Table(col_data)
+    table.write(fits_path, overwrite=True)
+

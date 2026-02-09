@@ -117,11 +117,9 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
                             continue
                         else:
                             # verifying now that the rmf file exists
-                            hdul=fits.open(spectrum_file)
-                            sp_header=hdul[1].header
-                            hdul.close()
-                            del hdul
-                            response=sp_header['RESPFILE']
+                            # using header_info from get_spectral_counts (avoids re-opening the file)
+                            header_info=spec_tuple[7]
+                            response=header_info['RESPFILE']
                             # full path to and name of rmf file depend on whetherpn/MOS
                             if (pn):
                                 # adding _v19.0 at the end of the root
@@ -129,7 +127,7 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
                                 rmf_file=os.path.join(responses_dir+'/PN',response19)
                             else:
                                 # finding out the resolution of the rmf
-                                specdelt=sp_header['SPECDELT']
+                                specdelt=header_info['SPECDELT']
                                 rmf_file=os.path.join(responses_dir+'/MOS','{:d}eV/'.format(specdelt)+response)
                             #
                             
