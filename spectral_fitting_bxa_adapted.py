@@ -1,5 +1,12 @@
 import os
 import datetime
+
+# Prevent numpy/MKL/OpenMP from spawning threads that
+# conflict with process-level parallelism (xargs -P / MPI)
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+os.environ.setdefault('MKL_NUM_THREADS', '1')
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+
 from xspec import *
 Fit.query = "no"  # Disable interactive prompts during fits
 import bxa.xspec as bxa
@@ -321,9 +328,29 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
     logger.info(f'   Setting the output directory for the fits {output_dir}')
 
     # Run BXA
-    solver = bxa.BXASolver(transformations=priors_list,
-                           outputfiles_basename=os.path.join(output_dir))
-    solver.run(resume=False)
+    # Number of free parameters determines optimal settings
+    n_free = len(priors_list)
+    solver = bxa.BXASolver(
+        transformations=priors_list,
+        outputfiles_basename=os.path.join(output_dir))
+
+    # Speed-tuned run:
+    # - n_live_points: 50 per free parameter (enough for
+    #   3-param models; default 400 is overkill)
+    # - evidence_tolerance=0.5: stop sooner (default ~0.1
+    #   is unnecessarily precise for parameter estimation)
+    # - speed="safe": use BXA's default step sampler
+    # - Lepsilon=0.1: default likelihood tolerance
+    n_live = max(50 * n_free, 100)
+    logger.info(
+        f"   BXA run: {n_free} free params, "
+        f"{n_live} live points, dlogz=0.5")
+    solver.run(
+        resume=False,
+        n_live_points=n_live,
+        evidence_tolerance=0.5,
+        speed="safe",
+        Lepsilon=0.1)
 
     # Read chain, make plots, return summaries
     chain_file = os.path.join(output_dir, "chain.fits")
