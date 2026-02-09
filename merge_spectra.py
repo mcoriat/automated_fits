@@ -1,7 +1,7 @@
 import os
 import shutil
 #import numpy as np
-#from astropy.io import fits
+from astropy.io import fits
 import logging
 
 from rebin_spectrum import rebin_spectrum
@@ -77,6 +77,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1)
                 # just copying the input spectrum with the highest snr
                 shutil.copy2(spec_list[imax][0],merged_spectrum)
                 bkg_file = spec_list[imax][0].replace("SRSPEC", "BGSPEC")
+                selected_spectrum = spec_list[imax][0]
             else:
                 # only one input spectrum, no merging needed
                 #
@@ -88,6 +89,7 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1)
                 #
                 shutil.copy2(spec_list[0][0],merged_spectrum)
                 bkg_file = spec_list[0][0].replace("SRSPEC", "BGSPEC")
+                selected_spectrum = spec_list[0][0]
                 #
             #
             # changing the extension of the merged spectrum to .grp for the binned spectrum
@@ -95,6 +97,24 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1)
             #
             # rebinning the spectrum, now with background file
             spec_tuple=rebin_spectrum(merged_spectrum,binned_spectrum,log_file,mincts=1, background_file=bkg_file)
+            #
+            # building the sp_dic dictionary with the file paths needed for BXA fitting
+            # ARF: derived from the selected original spectrum symlink in output_dir
+            arf_file = selected_spectrum.replace('SRSPEC', 'SRCARF')
+            # RMF: read the RESPFILE keyword from the rebinned .grp file header,
+            #      the symlink was created by check_spectra in output_dir
+            with fits.open(spec_tuple[0]) as hdul:
+                response_name = hdul[1].header['RESPFILE']
+            rmf_file = os.path.join(output_dir, response_name)
+            #
+            sp_dic = {
+                'SPECFILE': spec_tuple[0],
+                'BACKFILE': bkg_file,
+                'RESPFILE': rmf_file,
+                'ANCRFILE': arf_file
+            }
+            # extend the 7-element tuple with instrument and sp_dic
+            spec_tuple = spec_tuple + (instrument, sp_dic)
             merged_spectra.append(spec_tuple)
         #
     #

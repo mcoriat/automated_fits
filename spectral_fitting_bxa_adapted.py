@@ -110,18 +110,15 @@ def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
         AllData.clear()
         AllModels.clear()
 
-        spectra = []
-        for i in range(len(spectrum_files)):
-            s = Spectrum(spectrum_files[i])
-            s.background = background_files[i]
-            s.response = rmf_files[i]
-            s.response.arf = arf_files[i]
-            spectra.append(s)
+        s = Spectrum(spectrum_file)
+        s.background = background_file
+        s.response = rmf_file
+        s.response.arf = arf_file
 
         AllData.ignore("**-0.3 10.0-**")
 
 
-        # Build the same model you’ll use (so the set-up is consistent),
+        # Build the same model you'll use (so the set-up is consistent),
         # but *do not* run BXA here—just a quick XSPEC fit to get p-value.
         # Re-use your existing helper:
         try:
@@ -156,26 +153,17 @@ def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
 
 
 
-def fit_spectrum_bxa(spectrum_file, background_file, rmf_file, arf_file,
+def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
                      redshift=0.0, model_name="powerlaw",
                      output_base="bxa_fit_results", srcid="unknown", log_file="fit_spectrum_bxa.log"):
 
     logger.info('\n')
-    logger.info(f'Starting BXA fit on spectrum {spectrum_file}')
-    dirname = os.path.dirname(spectrum_file)
+    logger.info(f'Starting BXA fit on {len(spectrum_files)} spectrum file(s)')
+    dirname = os.path.dirname(spectrum_files[0])
     os.chdir(dirname)
     logger.info(f'   Changing focus to {dirname}')
 
-    # === NEW: unified background gate (flag=3 on any problem) ===
-    pval = check_background_fit(
-        spectrum_file, background_file, rmf_file, arf_file,
-        model_name, redshift, logger, srcid=str(srcid)
-    )
-    if pval is None:
-        # Any failure (no bkg, could not fit, or p<0.01) → flag 3 and bail out
-        return {"flag": 3}
-
-    # === From here on, your original working fitting code ===
+    # Background check already done by the caller (automated_fits.py)
     AllData.clear()
     AllModels.clear()
 
