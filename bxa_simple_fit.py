@@ -11,7 +11,7 @@ spectrum = Spectrum("3067718060100029_pn.grp")
 spectrum.background = "P0760940101PNS003BGSPEC0017.FTZ"
 
 # Load RMF and ARF files
-AllData(1).response = "epn_e3_ef20_sdY6.rmf"
+AllData(1).response = "epn_e3_ef20_sdY6_v19.0.rmf"
 AllData(1).multiresponse[0].arf = "P0760940101PNS003SRCARF0017.FTZ"
 
 # Ignore channels outside desired energy range (0.3–10 keV)
