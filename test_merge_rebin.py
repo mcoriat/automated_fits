@@ -48,8 +48,8 @@ def run_merge_and_rebin_tests():
         link = os.path.join(
             test_output_dir, os.path.basename(src_file)
         )
-        if os.path.islink(link):
-            os.unlink(link)
+        if os.path.islink(link) or os.path.exists(link):
+            os.remove(link)
         if os.path.exists(src_file):
             os.symlink(src_file, link)
 
