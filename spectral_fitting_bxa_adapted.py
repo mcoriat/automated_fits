@@ -71,8 +71,9 @@ def get_model_and_priors(model_name, redshift=0.0, flux_band=(0.5, 10.0)):
     model.cflux.Emin = flux_band[0]
     model.cflux.Emax = flux_band[1]
 
-    # Typical starting value for flux (erg/cm^2/s)
-    model.cflux.Flux.values = "1e-12,,1e-15,1e-15,1e-9,1e-9"
+    # Typical starting value for lg10Flux (log10 of flux in erg/cm^2/s)
+    # XSPEC cflux parameter is lg10Flux, not Flux
+    model.cflux.lg10Flux.values = "-12.0,,-15.0,-15.0,-9.0,-9.0"
 
     # Priors: always include flux instead of norm
     priors = [
@@ -90,7 +91,9 @@ def get_model_and_priors(model_name, redshift=0.0, flux_band=(0.5, 10.0)):
         priors.append(bxa.create_uniform_prior_for(model, model.bremss.kT))
 
     # Finally, flux prior
-    priors.append(bxa.create_loguniform_prior_for(model, model.cflux.Flux))
+    # lg10Flux is already in log-space, so a uniform prior on
+    # lg10Flux = log-uniform prior on the actual flux
+    priors.append(bxa.create_uniform_prior_for(model, model.cflux.lg10Flux))
 
     return model, priors
     
