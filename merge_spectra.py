@@ -99,13 +99,16 @@ def merge_spectra(pn_spectra,mos_spectra, srcid, output_dir, log_file, mincts=1)
             spec_tuple=rebin_spectrum(merged_spectrum,binned_spectrum,log_file,mincts=1, background_file=bkg_file)
             #
             # building the sp_dic dictionary with the file paths needed for BXA fitting
+            # all paths are made absolute for XSPEC compatibility
             # ARF: derived from the selected original spectrum symlink in output_dir
-            arf_file = selected_spectrum.replace('SRSPEC', 'SRCARF')
+            arf_file = os.path.abspath(selected_spectrum.replace('SRSPEC', 'SRCARF'))
+            # background file as absolute path
+            bkg_file = os.path.abspath(bkg_file)
             # RMF: read the RESPFILE keyword from the rebinned .grp file header,
             #      the symlink was created by check_spectra in output_dir
             with fits.open(spec_tuple[0]) as hdul:
                 response_name = hdul[1].header['RESPFILE']
-            rmf_file = os.path.join(output_dir, response_name)
+            rmf_file = os.path.abspath(os.path.join(output_dir, response_name))
             #
             sp_dic = {
                 'SPECFILE': spec_tuple[0],

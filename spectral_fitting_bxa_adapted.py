@@ -110,6 +110,12 @@ def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
         AllData.clear()
         AllModels.clear()
 
+        # Change to the spectrum directory so XSPEC can resolve
+        # filenames referenced in the FITS header
+        spec_dir = os.path.dirname(spectrum_file)
+        if spec_dir:
+            os.chdir(spec_dir)
+
         s = Spectrum(spectrum_file)
         s.background = background_file
         s.response = rmf_file
