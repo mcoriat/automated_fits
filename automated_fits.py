@@ -134,7 +134,7 @@ def main():
 
     # Spectra
     logger.info('\n\n Finding which of those combinations correspond to existing spectra on disk')
-    srcid_list_spectra = list_spectra(srcid, srcid_obsid_mapping, args.data_dir, log_file)
+    srcid_list_spectra = list_spectra(srcid, srcid_obsid_mapping, args.data_dir)
     nspec = len(srcid_list_spectra)
     if (nspec>0):
         logger.info(f'   {nspec} spectra found for SRCID {srcid}')
