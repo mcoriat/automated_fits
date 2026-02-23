@@ -101,25 +101,22 @@ def read_stacked_catalog_batch(catalog_file, srcid_list):
     sel_obsids = all_obsids[mask]
     sel_srcnums = all_srcnums[mask]
 
-    # Build the output dictionary
+    # Build the output dictionary.
+    # Uses dict-based grouping so SRCID groups do NOT need
+    # to be contiguous (safe with any catalog sort order).
+    # Rows with missing OBS_ID (header/summary rows in the
+    # original stacked catalog) are skipped regardless of
+    # their position.
     result = {}
-    prev_srcid = None
     for i in range(len(sel_srcids)):
         sid = int(sel_srcids[i])
         obsid_str = str(sel_obsids[i]).strip()
-        if sid != prev_srcid:
-            # First row of a new SRCID group
+
+        if sid not in result:
             result[sid] = []
-            prev_srcid = sid
-            # Auto-detect: if OBS_ID is non-empty this is a
-            # real detection (e.g. cross-matched catalog), so
-            # include it.  If empty or a sentinel ("--"), it is
-            # the summary/header row of the original stacked
-            # catalog — skip it.
-            if obsid_str not in _MISSING_OBSID:
-                result[sid].append(
-                    (obsid_str, int(sel_srcnums[i])))
-        else:
+
+        # Skip rows with missing OBS_ID (header rows)
+        if obsid_str not in _MISSING_OBSID:
             result[sid].append(
                 (obsid_str, int(sel_srcnums[i])))
 
