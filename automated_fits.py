@@ -278,12 +278,18 @@ def process_one_source(srcid, args, output_dir,
                     rmf_file, arf_file,
                     args.model_name, args.redshift,
                     logger, srcid=str(srcid))
+                print(f"   [DEBUG] check_background_fit returned: "
+                      f"pval={pval} for inst={inst}", flush=True)
                 if pval is None:
                     logger.warning(
                         f"   Background NOT OK for {inst} "
                         f"→ skipping this instrument")
+                    print(f"   [DEBUG] → SKIP instrument {inst}",
+                          flush=True)
                 else:
                     valid_specs.append(spec)
+                    print(f"   [DEBUG] → KEEP instrument {inst}",
+                          flush=True)
 
             if not valid_specs:
                 logger.warning(
