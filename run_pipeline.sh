@@ -190,11 +190,20 @@ echo " Total SRCIDs in file: ${TOTAL_SRCIDS}"
 # For test mode, use a small subset
 if [ "${DO_TEST}" = true ]; then
     NWORKERS=2
-    echo ""
-    echo " *** TEST MODE: ${TEST_NSOURCES} sources, ${NWORKERS} workers ***"
-    SRCID_FILE_ACTIVE="${OUTPUT_DIR}/srcids_test.txt"
-    head -n "${TEST_NSOURCES}" "${SRCID_FILE}" > "${SRCID_FILE_ACTIVE}"
-    TOTAL_SRCIDS="${TEST_NSOURCES}"
+    # If the user provided a custom srcid_file, use it as-is;
+    # otherwise take the first N lines from the default list.
+    if [ "${TOTAL_SRCIDS}" -le "${TEST_NSOURCES}" ]; then
+        echo ""
+        echo " *** TEST MODE: ${TOTAL_SRCIDS} sources (from custom file), ${NWORKERS} workers ***"
+        SRCID_FILE_ACTIVE="${SRCID_FILE}"
+        TOTAL_SRCIDS="${TOTAL_SRCIDS}"
+    else
+        echo ""
+        echo " *** TEST MODE: ${TEST_NSOURCES} sources, ${NWORKERS} workers ***"
+        SRCID_FILE_ACTIVE="${OUTPUT_DIR}/srcids_test.txt"
+        head -n "${TEST_NSOURCES}" "${SRCID_FILE}" > "${SRCID_FILE_ACTIVE}"
+        TOTAL_SRCIDS="${TEST_NSOURCES}"
+    fi
 else
     SRCID_FILE_ACTIVE="${SRCID_FILE}"
 fi
