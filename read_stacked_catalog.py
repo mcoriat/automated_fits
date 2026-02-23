@@ -1,19 +1,30 @@
 import numpy as np
 from astropy.io import fits
 
+# Sentinel values used for missing OBS_ID in the header/summary
+# row of the original stacked catalog.
+_MISSING_OBSID = frozenset({'', '--'})
 
-# Function to read the stacked 4XMM-DR11 catalog and map SRCID to corresponding OBSIDs
-def read_stacked_catalog(catalog_file,srcid_ref):
+
+# Function to read a catalog and map SRCID to corresponding OBSIDs
+def read_stacked_catalog(catalog_file, srcid_ref):
     """
-    Read a stacked catalog file and a SRCID and create a dictionary mapping each SRCID to its associated list of OBS_ID and SRC_NUM .
+    Read a catalog file and create a dictionary mapping a SRCID
+    to its associated list of (OBS_ID, SRC_NUM) tuples.
+
+    Works with both:
+    - The original stacked catalog (has a summary/header row per
+      SRCID with empty OBS_ID, which is auto-skipped).
+    - A cross-matched catalog (all rows are real detections with
+      non-empty OBS_ID, so no row is skipped).
 
     Parameters:
-    catalog_file (str): The path to the stacked catalog file.
-
-    srcid_ref (long): the SRCID to be fitted
+    catalog_file (str): Path to the catalog FITS file.
+    srcid_ref (long): The SRCID to look up.
 
     Returns:
-    dict: A dictionary associating the SRCID to its list of OBS_ID and SRC_NUM.
+    dict: {srcid: [(obsid, srcnum), ...]}
+          Empty dict if SRCID is not found in the catalog.
     """
 
     with fits.open(catalog_file) as hdul:
@@ -22,27 +33,34 @@ def read_stacked_catalog(catalog_file,srcid_ref):
     # Create a dictionary to map each SRCID to its list of OBS_ID/SRC_NUM
     srcid_obsid_mapping = {}
     # Flag to see if we have reached the SRCID yet
-    found=False
+    found = False
     # loop over the rows in the input file
     for i in range(len(catalog_data)):
         srcid = catalog_data['SRCID'][i]
         obsid = catalog_data['OBS_ID'][i]
-        srcnum=catalog_data['SRC_NUM'][i]
+        srcnum = catalog_data['SRC_NUM'][i]
 
         # checking if this row corresponds to the input SRCID
-        if srcid==srcid_ref:    
+        if srcid == srcid_ref:
             if srcid in srcid_obsid_mapping:
                 # second and consecutive rows appended
-                srcid_obsid_mapping[srcid].append((obsid,srcnum))
+                srcid_obsid_mapping[srcid].append((obsid, srcnum))
             else:
-                # ignoring the first row for each SRCID, because no OBS_ID on it
-                # initializing the list of tuples (OBS_ID,SRC_NUM)
+                # first row for this SRCID group
                 srcid_obsid_mapping[srcid] = []
-                # setting the flag
-                found=True
+                found = True
+                # Auto-detect: if OBS_ID is non-empty this is a
+                # real detection (e.g. cross-matched catalog with
+                # no header rows), so include it.  If empty or a
+                # sentinel ("--"), this is the summary/header row
+                # of the original stacked catalog and we skip it.
+                if str(obsid).strip() not in _MISSING_OBSID:
+                    srcid_obsid_mapping[srcid].append(
+                        (obsid, srcnum))
         elif found:
-            # all rows for the same SRCID are consecutive so, once SRCID has been found
-            #     all following rows with different SRCID can be safely skipped
+            # all rows for the same SRCID are consecutive so,
+            # once SRCID has been found all following rows with
+            # different SRCID can be safely skipped
             break
 
     return srcid_obsid_mapping
@@ -50,23 +68,24 @@ def read_stacked_catalog(catalog_file,srcid_ref):
 
 def read_stacked_catalog_batch(catalog_file, srcid_list):
     """
-    Read a stacked catalog file once and return mappings for
-    all requested SRCIDs.  Uses numpy vectorized filtering
+    Read a catalog file once and return mappings for all
+    requested SRCIDs.  Uses numpy vectorized filtering
     instead of a Python for-loop, so the cost is ~30s total
-    for the full 2.5M-row catalog rather than ~12s per source.
+    for the full catalog rather than ~12s per source.
 
-    The first row for each SRCID group is skipped (no OBS_ID),
-    replicating the convention in read_stacked_catalog().
+    Works with both the original stacked catalog (header rows
+    with empty OBS_ID are auto-skipped) and a cross-matched
+    catalog (all rows are real detections, none skipped).
 
     Parameters:
-    - catalog_file (str): Path to the stacked catalog FITS file.
+    - catalog_file (str): Path to the catalog FITS file.
     - srcid_list (list of int): List of SRCIDs to look up.
 
     Returns:
     - dict: {srcid: [(obsid, srcnum), ...], ...}
-      SRCIDs not found in the catalog are omitted from the dict.
-      SRCIDs whose only row is the header row (no OBS_ID pairs)
-      map to an empty list.
+      SRCIDs not found in the catalog are omitted from the
+      dict.  SRCIDs whose only row is a header row (empty
+      OBS_ID) map to an empty list.
     """
     with fits.open(catalog_file) as hdul:
         data = hdul[1].data
@@ -87,15 +106,22 @@ def read_stacked_catalog_batch(catalog_file, srcid_list):
     prev_srcid = None
     for i in range(len(sel_srcids)):
         sid = int(sel_srcids[i])
+        obsid_str = str(sel_obsids[i]).strip()
         if sid != prev_srcid:
-            # First row of a new SRCID group: skip it (no OBS_ID)
+            # First row of a new SRCID group
             result[sid] = []
             prev_srcid = sid
+            # Auto-detect: if OBS_ID is non-empty this is a
+            # real detection (e.g. cross-matched catalog), so
+            # include it.  If empty or a sentinel ("--"), it is
+            # the summary/header row of the original stacked
+            # catalog — skip it.
+            if obsid_str not in _MISSING_OBSID:
+                result[sid].append(
+                    (obsid_str, int(sel_srcnums[i])))
         else:
             result[sid].append(
-                (str(sel_obsids[i]).strip(),
-                 int(sel_srcnums[i]))
-            )
+                (obsid_str, int(sel_srcnums[i])))
 
     return result
 

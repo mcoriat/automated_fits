@@ -81,6 +81,19 @@ def process_one_source(srcid, args, output_dir,
     if not os.path.exists(src_dir):
         os.makedirs(src_dir, exist_ok=True)
 
+    # Skip if already completed (chain.fits exists for
+    # requested model).  Glob for any subdirectory matching
+    # the model name prefix that contains a chain.fits file.
+    if getattr(args, 'skip_completed', False):
+        import glob
+        chain_pattern = os.path.join(
+            src_dir, f"{args.model_name}*", "chain.fits")
+        existing = glob.glob(chain_pattern)
+        if existing:
+            print(f"   Skipping SRCID {srcid} "
+                  f"(chain.fits already exists)")
+            return (0, None)
+
     # Per-source log file
     log_file = os.path.join(
         src_dir,
@@ -410,6 +423,10 @@ def main():
         "--skip_bkg_check", action="store_true",
         help="Skip background quality check before BXA "
              "fitting")
+    parser.add_argument(
+        "--skip_completed", action="store_true",
+        help="Skip SRCIDs that already have a chain.fits "
+             "for the requested model (useful for restarts)")
 
     parser.add_argument(
         "--init", action="store_true",
