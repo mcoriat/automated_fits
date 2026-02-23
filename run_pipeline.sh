@@ -33,6 +33,7 @@ SRCID_FILE="${REPO_DIR}/srcids.txt"
 # Default parallel settings
 NWORKERS=30          # Number of parallel batch jobs (keep ~10 cores free)
 MODEL="powerlaw"     # Spectral model: powerlaw, apec_single, blackbody, bremss
+SUBDIR="product"     # Subdirectory under OBS_ID: 'product' (5XMM) or 'pps' (4XMM)
 TEST_NSOURCES=10     # Number of sources for test run
 
 # ==============================================================
@@ -268,6 +269,7 @@ for chunk_file in "${CHUNK_DIR}"/chunk_*.txt; do
         "${CATALOG}" \
         "dummy_output.txt" \
         --srcid_file "${chunk_file}" \
+        --subdir "${SUBDIR}" \
         --use_bxa \
         --model_name "${MODEL}" \
         --export_results_fits \

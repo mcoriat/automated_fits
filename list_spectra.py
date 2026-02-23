@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 # Function to check which spectra are suitable for fitting
 def list_spectra(srcid, srcid_obsid_dict, data_dir,
-                 dir_cache=None):
+                 dir_cache=None, subdir='pps'):
     """
     Find the spectra that actually exist associated to a given
     SRCID.
@@ -23,6 +23,9 @@ def list_spectra(srcid, srcid_obsid_dict, data_dir,
         stored after the first real listing. Shared across
         sources in batch mode to avoid re-listing the same
         OBS_ID directories.
+    - subdir (str): Subdirectory name under each OBS_ID
+        folder containing spectra (default: 'pps').
+        Use 'product' for 5XMM production data.
     Returns:
     - list_spectra (list): A list of strings containing the
         spectra that are present in data_dir
@@ -37,7 +40,7 @@ def list_spectra(srcid, srcid_obsid_dict, data_dir,
 
     for obsid, srcnum in obsid_srcnum_list:
         # path corresponding to that obsid
-        path = data_dir + '/' + obsid + '/pps/'
+        path = data_dir + '/' + obsid + '/' + subdir + '/'
         # list of files in the directory (cached if possible)
         if dir_cache is not None:
             if path not in dir_cache:
@@ -66,7 +69,8 @@ def list_spectra(srcid, srcid_obsid_dict, data_dir,
     return list_spectra
 
 
-def build_dir_listing_cache(catalog_mapping, data_dir):
+def build_dir_listing_cache(catalog_mapping, data_dir,
+                            subdir='pps'):
     """
     Pre-scan all OBS_ID directories referenced by the catalog
     mapping and return a cache dict suitable for passing to
@@ -81,6 +85,8 @@ def build_dir_listing_cache(catalog_mapping, data_dir):
         read_stacked_catalog_batch(), i.e.
         {srcid: [(obsid, srcnum), ...], ...}
     - data_dir (str): Top directory with observation data.
+    - subdir (str): Subdirectory name under each OBS_ID
+        folder (default: 'pps'). Use 'product' for 5XMM.
 
     Returns:
     - dir_cache (dict): {dir_path: [filenames], ...}
@@ -93,7 +99,7 @@ def build_dir_listing_cache(catalog_mapping, data_dir):
 
     dir_cache = {}
     for obsid in sorted(obsid_set):
-        path = data_dir + '/' + obsid + '/pps/'
+        path = data_dir + '/' + obsid + '/' + subdir + '/'
         try:
             dir_cache[path] = os.listdir(path=path)
         except FileNotFoundError:

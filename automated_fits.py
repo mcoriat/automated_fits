@@ -169,7 +169,8 @@ def process_one_source(srcid, args, output_dir,
         'correspond to existing spectra on disk')
     srcid_list_spectra = list_spectra(
         srcid, srcid_obsid_mapping, args.data_dir,
-        dir_cache=dir_listing_cache)
+        dir_cache=dir_listing_cache,
+        subdir=args.subdir)
     nspec = len(srcid_list_spectra)
     if nspec > 0:
         logger.info(
@@ -420,6 +421,11 @@ def main():
         "--srcid_file", type=str, default=None,
         help="Text file with one SRCID per line (batch mode)")
     parser.add_argument(
+        "--subdir", type=str, default="pps",
+        help="Subdirectory name under each OBS_ID folder "
+             "containing spectra (default: pps). "
+             "Use 'product' for 5XMM production data.")
+    parser.add_argument(
         "--skip_bkg_check", action="store_true",
         help="Skip background quality check before BXA "
              "fitting")
@@ -535,7 +541,8 @@ def main():
         # Pre-build directory listing cache
         print(" Building directory listing cache...")
         dir_cache = build_dir_listing_cache(
-            catalog_mapping, args.data_dir)
+            catalog_mapping, args.data_dir,
+            subdir=args.subdir)
         print(f" Cache built: {len(dir_cache)} directories")
 
         # Process each source
