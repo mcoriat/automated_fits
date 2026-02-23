@@ -264,42 +264,33 @@ def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
         # Build the same model you'll use (so the set-up is consistent),
         # but *do not* run BXA here—just a quick XSPEC fit to get p-value.
         # prefit=False: we do our own Fit.perform() below
-        print(f"   [BKG_CHECK] Building model for {srcid}...", flush=True)
         try:
             _model, _priors = get_model_and_priors(model_name, redshift, prefit=False)
         except Exception as e:
-            print(f"   [BKG_CHECK] FAILED to build model: {e}", flush=True)
             logger.warning(f"   Background check: could not build model for {srcid}: {e}")
             return None
-        print(f"   [BKG_CHECK] Model built OK. Running Fit.perform()...", flush=True)
 
         # Perform a quick local fit
         Fit.perform()
-        print(f"   [BKG_CHECK] Fit.perform() done.", flush=True)
 
-        # Convert the fit test statistic to a p-value (approximate; same logic as before)
+        # Convert the fit test statistic to a p-value
         try:
             from scipy.stats import chi2 as chi2_dist
             bg_stat = Fit.testStatistic   # property, not method
             dof = Fit.dof
             pval = 1.0 - chi2_dist.cdf(bg_stat, dof)
-            print(f"   [BKG_CHECK] chi2={bg_stat:.2f}, dof={dof}, pval={pval:.6f}", flush=True)
         except Exception as e:
-            print(f"   [BKG_CHECK] FAILED p-value computation: {e}", flush=True)
             logger.warning(f"   Background check: cannot compute p-value for {srcid}: {e}")
             return None
 
         if (pval is None) or (not np.isfinite(pval)) or (pval < 0.01):
-            print(f"   [BKG_CHECK] REJECTED: pval={pval} (None/NaN/inf or <0.01)", flush=True)
             logger.warning(f"   Background check: p={pval:.4f} (<0.01) → NOT OK for {srcid}")
             return None
 
-        print(f"   [BKG_CHECK] PASSED: pval={pval:.6f}", flush=True)
         logger.info(f"   Background check: p={pval:.4f} → OK for {srcid}")
         return pval
 
     except Exception as e:
-        print(f"   [BKG_CHECK] OUTER EXCEPTION: {type(e).__name__}: {e}", flush=True)
         logger.warning(f"   Background check failed for {srcid}: {e}")
         return None
 

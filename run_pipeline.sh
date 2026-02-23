@@ -340,13 +340,12 @@ echo "=============================================="
 echo ""
 echo " Merging fit results from all chunks..."
 
-python3 -u << 'MERGE_SCRIPT'
+OUTPUT_DIR_ESCAPED="${OUTPUT_DIR}" python3 -u << 'MERGE_SCRIPT'
 import os
 import sys
 from astropy.table import Table, vstack
 
-output_dir = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
-    "OUTPUT_DIR", ".")
+output_dir = os.environ["OUTPUT_DIR_ESCAPED"]
 
 # Find all chunk result files
 result_files = sorted([
