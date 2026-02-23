@@ -40,6 +40,7 @@ def get_model_and_priors(model_name, redshift=0.0,
         ("powerlaw", "apec_single", "blackbody", "bremss").
     redshift : float
         Redshift for models that need it.
+        Defaults to 0.0 (no redshift correction).
     flux_band : tuple
         Energy band (Emin, Emax) in keV for cflux.
     prefit : bool
@@ -48,6 +49,9 @@ def get_model_and_priors(model_name, redshift=0.0,
         priors. This dramatically speeds up ultranest by
         reducing the prior volume.
     """
+    # Defensive: ensure redshift is a valid float
+    if redshift is None:
+        redshift = 0.0
 
     if model_name == "powerlaw":
         model = Model("phabs*cflux*zpowerlw")
@@ -235,6 +239,9 @@ def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
     """
     from xspec import AllData, AllModels, Fit, Spectrum
     import numpy as np
+    # Defensive: ensure redshift is a valid float
+    if redshift is None:
+        redshift = 0.0
     try:
         # Clean local XSPEC state for the quick test
         AllData.clear()
@@ -292,6 +299,9 @@ def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
 def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
                      redshift=0.0, model_name="powerlaw",
                      output_base="bxa_fit_results", srcid="unknown", log_file="fit_spectrum_bxa.log"):
+    # Defensive: ensure redshift is a valid float
+    if redshift is None:
+        redshift = 0.0
 
     logger.info('\n')
     logger.info(f'Starting BXA fit on {len(spectrum_files)} spectrum file(s)')

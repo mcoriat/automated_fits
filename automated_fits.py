@@ -462,8 +462,9 @@ def main():
         help="directory suffix to add for "
              "det_there != det_use")
     parser.add_argument(
-        "--redshift", type=float,
-        help="redshift to be used for redshifted models")
+        "--redshift", type=float, default=0.0,
+        help="redshift to be used for redshifted models "
+             "(default: 0.0 = no redshift correction)")
     parser.add_argument(
         "--modelname",
         help="use a custom modelname "
