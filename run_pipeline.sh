@@ -112,16 +112,22 @@ else
     echo " HEASOFT already loaded: ${HEADAS}"
 fi
 
-# Initialize SAS (may be needed for shared libraries)
+# Initialize SAS (may be needed for shared libraries).
+# The SAS setup script uses variables that may be unbound,
+# so we temporarily relax strict mode.
 if [ -z "${SAS_DIR:-}" ]; then
     export SAS_DIR=/home/filippos/SASscreeningDR11/
     export SAS_CCFPATH=/home/filippos/sasbuild/ccf/pub
+    export SAS_PATH="${SAS_DIR}"
     if [ -f "${SAS_DIR}/sas-setup.sh" ]; then
         echo " Initializing SAS..."
-        source "${SAS_DIR}/sas-setup.sh"
+        set +eu
+        source "${SAS_DIR}/sas-setup.sh" 2>/dev/null
+        set -eu
+        echo " SAS initialized (or skipped gracefully)."
     else
         echo " WARNING: SAS setup not found at ${SAS_DIR}/sas-setup.sh"
-        echo "          Continuing without SAS (may not be needed)."
+        echo "          Continuing without SAS (not needed for BXA fits)."
     fi
 else
     echo " SAS already loaded: ${SAS_DIR}"
