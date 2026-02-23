@@ -97,21 +97,38 @@ echo ""
 echo " Started: $(date)"
 echo ""
 
-# Initialize HEASOFT if not already loaded
-# (adjust this path for your HEASOFT installation)
+# Initialize HEASOFT (required for PyXSPEC)
 if [ -z "${HEADAS:-}" ]; then
-    HEADAS_INIT="/home/mcoriat/heasoft/x86_64-pc-linux/headas-init.sh"
-    if [ -f "${HEADAS_INIT}" ]; then
+    export HEADAS=/home/mcoriat/Software/heasoft-6.35.2/x86_64-pc-linux-gnu-libc2.31
+    if [ -f "${HEADAS}/headas-init.sh" ]; then
         echo " Initializing HEASOFT..."
-        source "${HEADAS_INIT}"
+        source "${HEADAS}/headas-init.sh"
     else
-        echo " WARNING: HEADAS not set and ${HEADAS_INIT} not found."
-        echo "          Edit HEADAS_INIT in this script or source it manually."
-        echo "          Continuing anyway..."
+        echo " ERROR: HEADAS init script not found at:"
+        echo "        ${HEADAS}/headas-init.sh"
+        exit 1
     fi
 else
     echo " HEASOFT already loaded: ${HEADAS}"
 fi
+
+# Initialize SAS (may be needed for shared libraries)
+if [ -z "${SAS_DIR:-}" ]; then
+    export SAS_DIR=/home/filippos/SASscreeningDR11/
+    export SAS_CCFPATH=/home/filippos/sasbuild/ccf/pub
+    if [ -f "${SAS_DIR}/sas-setup.sh" ]; then
+        echo " Initializing SAS..."
+        source "${SAS_DIR}/sas-setup.sh"
+    else
+        echo " WARNING: SAS setup not found at ${SAS_DIR}/sas-setup.sh"
+        echo "          Continuing without SAS (may not be needed)."
+    fi
+else
+    echo " SAS already loaded: ${SAS_DIR}"
+fi
+
+# Extra library path (Qt libs needed by some HEASOFT/SAS components)
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:/sasbuild/local/sasbld03n/GNU_CC_CXX_9.2.0/qt-x11-free/lib/"
 
 # Verify critical dependencies
 echo ""
