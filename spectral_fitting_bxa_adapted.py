@@ -279,10 +279,10 @@ def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
 
         # Convert the fit test statistic to a p-value (approximate; same logic as before)
         try:
-            from scipy.stats import chi2
-            bg_stat = Fit.testStatistic()
+            from scipy.stats import chi2 as chi2_dist
+            bg_stat = Fit.testStatistic   # property, not method
             dof = Fit.dof
-            pval = 1.0 - chi2.cdf(bg_stat, dof)
+            pval = 1.0 - chi2_dist.cdf(bg_stat, dof)
             print(f"   [BKG_CHECK] chi2={bg_stat:.2f}, dof={dof}, pval={pval:.6f}", flush=True)
         except Exception as e:
             print(f"   [BKG_CHECK] FAILED p-value computation: {e}", flush=True)
