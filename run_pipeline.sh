@@ -267,8 +267,9 @@ echo ""
 LOG_DIR="${OUTPUT_DIR}/chunk_logs"
 mkdir -p "${LOG_DIR}"
 
-# Record start time
+# Record start time (also write to file for monitor_pipeline.sh)
 START_TIME=$(date +%s)
+echo "${START_TIME}" > "${OUTPUT_DIR}/.pipeline_start_time"
 
 # Launch all chunks in background
 PIDS=()
