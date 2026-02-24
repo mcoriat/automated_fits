@@ -628,6 +628,8 @@ def main():
         accumulated_results = []
         n_success = 0
         n_fail = 0
+        n_flushed = 0          # results already written to disk
+        FLUSH_EVERY = 50       # save results every N fits
 
         for i, srcid in enumerate(srcids):
             # Save/restore cwd (BXA + XSPEC chdir)
@@ -648,6 +650,18 @@ def main():
                     if args.cleanup_chains:
                         _cleanup_chain_dir(
                             results, srcid, output_dir)
+                    # Periodic flush: save results to FITS
+                    # so they survive restarts and are
+                    # visible to --skip_completed
+                    if (args.export_results_fits and
+                            n_success % FLUSH_EVERY == 0):
+                        print(f"   Flushing {len(accumulated_results)} "
+                              f"results to {args.export_filename}")
+                        export_bxa_results_to_fits_bulk(
+                            accumulated_results,
+                            output_base=output_dir,
+                            fits_filename=args.export_filename)
+                        n_flushed = len(accumulated_results)
                 else:
                     n_fail += 1
                     logger.info(
@@ -662,10 +676,12 @@ def main():
             finally:
                 os.chdir(original_cwd)
 
-        # Bulk export of all results
+        # Final export (writes all results, including
+        # any accumulated since the last flush)
         if args.export_results_fits and accumulated_results:
-            print(f"\n Exporting {len(accumulated_results)} "
-                  f"fit results to FITS...")
+            if len(accumulated_results) > n_flushed:
+                print(f"\n Exporting {len(accumulated_results)} "
+                      f"fit results to FITS...")
             export_bxa_results_to_fits_bulk(
                 accumulated_results,
                 output_base=output_dir,
