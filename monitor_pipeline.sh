@@ -61,7 +61,7 @@ N_TOUCHED=$((N_PROCESSED + N_SKIPPED))
 
 # Error rate (only among sources that were actually fitted, not skipped)
 if [ "${N_PROCESSED}" -gt 0 ]; then
-    ERROR_RATE=$(echo "scale=1; 100 * (1 - ${N_SUCCESS} / ${N_PROCESSED})" | bc 2>/dev/null || echo "?")
+    ERROR_RATE=$(echo "scale=1; 100 - 100 * ${N_SUCCESS} / ${N_PROCESSED}" | bc 2>/dev/null || echo "?")
 else
     ERROR_RATE="—"
 fi
@@ -126,9 +126,10 @@ if [ "${N_TOUCHED}" -gt 0 ] && [ "${TOTAL}" != "?" ]; then
         NOW=$(date +%s)
         ELAPSED=$(echo "${NOW} - ${FIRST_LOG}" | bc 2>/dev/null || echo 0)
         ELAPSED_INT=${ELAPSED%.*}
+        ELAPSED_INT=${ELAPSED_INT:-0}
 
         # Only show rates after at least 5 minutes of data
-        if [ "${ELAPSED_INT}" -gt 300 ]; then
+        if [ "${ELAPSED_INT}" -gt 300 ] 2>/dev/null; then
             ELAPSED_H=$(echo "scale=1; ${ELAPSED} / 3600" | bc 2>/dev/null || echo "?")
 
             # Processing rate (all sources including fast failures and skips)
@@ -155,7 +156,7 @@ if [ "${N_TOUCHED}" -gt 0 ] && [ "${TOTAL}" != "?" ]; then
             echo "   Expected fits:   ~${EXPECTED_FITS} (of ${TOTAL} total)"
             echo "   Est. remaining:  ~${ETA_H} hours"
         else
-            ELAPSED_MIN=$((ELAPSED_INT / 60))
+            ELAPSED_MIN=$(( (ELAPSED_INT > 0 ? ELAPSED_INT : 0) / 60 ))
             echo ""
             echo " Timing: ${ELAPSED_MIN}min elapsed (rates shown after 5min)"
         fi
