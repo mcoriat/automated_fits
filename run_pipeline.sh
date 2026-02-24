@@ -35,6 +35,7 @@ NWORKERS=30          # Number of parallel batch jobs (keep ~10 cores free)
 MODEL="powerlaw"     # Spectral model: powerlaw, apec_single, blackbody, bremss
 SUBDIR="product"     # Subdirectory under OBS_ID: 'product' (5XMM) or 'pps' (4XMM)
 TEST_NSOURCES=10     # Number of sources for test run
+CLEANUP_CHAINS=false # Delete chain.fits/corner.png after extracting statistics
 
 # ==============================================================
 # PARSE COMMAND-LINE OPTIONS
@@ -68,6 +69,10 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_DIR="$2"
             shift 2
             ;;
+        --cleanup_chains)
+            CLEANUP_CHAINS=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: bash run_pipeline.sh [OPTIONS]"
             echo ""
@@ -78,6 +83,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --model NAME     Spectral model (default: ${MODEL})"
             echo "  --srcid_file F   Path to srcid list (default: ${SRCID_FILE})"
             echo "  --output_dir D   Output directory (default: ${OUTPUT_DIR})"
+            echo "  --cleanup_chains Delete chain.fits/corner.png after extracting stats"
             echo "  --help           Show this help"
             exit 0
             ;;
@@ -241,6 +247,13 @@ if [ "${DO_RESUME}" = true ]; then
     echo " RESUME MODE: will skip sources with existing chain.fits"
 fi
 
+CLEANUP_FLAG=""
+if [ "${CLEANUP_CHAINS}" = true ]; then
+    CLEANUP_FLAG="--cleanup_chains"
+    echo ""
+    echo " CLEANUP MODE: chain.fits and corner.png deleted after stats extraction"
+fi
+
 # ==============================================================
 # LAUNCH PARALLEL JOBS
 # ==============================================================
@@ -284,6 +297,7 @@ for chunk_file in "${CHUNK_DIR}"/chunk_*.txt; do
         --export_results_fits \
         --export_filename "${export_file}" \
         ${SKIP_FLAG} \
+        ${CLEANUP_FLAG} \
         > "${chunk_log}" 2>&1 &
 
     PIDS+=($!)

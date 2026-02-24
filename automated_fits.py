@@ -31,6 +31,7 @@ Output error codes
 import argparse
 import os
 import sys
+import shutil
 import logging
 from read_stacked_catalog import (read_stacked_catalog,
                                   read_stacked_catalog_batch)
@@ -50,9 +51,58 @@ from spectral_fitting_bxa_adapted import (
 logger = logging.getLogger(__name__)
 
 
+def _load_completed_srcids(output_dir):
+    """Scan output_dir for fit_results*.fits files and return
+    the set of SRCIDs that already have results.
+
+    Used by --skip_completed when chain files have been cleaned
+    up (--cleanup_chains) and are no longer on disk.
+    """
+    from astropy.io import fits as pyfits
+    import glob as globmod
+    completed = set()
+    pattern = os.path.join(output_dir, "fit_results*.fits")
+    for fpath in globmod.glob(pattern):
+        try:
+            with pyfits.open(fpath) as hdul:
+                if len(hdul) > 1 and 'SRCID' in hdul[1].columns.names:
+                    for sid in hdul[1].data['SRCID']:
+                        completed.add(int(sid))
+        except Exception:
+            pass  # skip corrupt / incomplete files
+    return completed
+
+
+def _cleanup_chain_dir(results, srcid, output_dir):
+    """Remove the BXA output directory (chain.fits, corner.png,
+    ultranest run files) after summary statistics have been
+    extracted into memory.  Keeps the per-source directory and
+    the log file.
+
+    Parameters:
+    - results: dict returned by fit_spectrum_bxa, must contain
+        'output_dir' key pointing to the model subdirectory.
+    - srcid: Source ID (for logging).
+    - output_dir: Top-level output directory (unused here but
+        kept for consistency).
+    """
+    chain_dir = results.get("output_dir")
+    if chain_dir and os.path.isdir(chain_dir):
+        try:
+            shutil.rmtree(chain_dir)
+            logger.info(
+                f"   Cleaned up chain directory: {chain_dir}")
+            print(
+                f"   Cleaned up chain directory: {chain_dir}")
+        except OSError as e:
+            logger.warning(
+                f"   Could not clean up {chain_dir}: {e}")
+
+
 def process_one_source(srcid, args, output_dir,
                        srcid_obsid_mapping=None,
-                       dir_listing_cache=None):
+                       dir_listing_cache=None,
+                       completed_srcids=None):
     """
     Process a single SRCID through the full pipeline:
     catalog lookup → list spectra → validate → merge →
@@ -68,6 +118,9 @@ def process_one_source(srcid, args, output_dir,
     - dir_listing_cache (dict or None): Pre-built directory
         listing cache from build_dir_listing_cache(). If None,
         directories are listed on the fly.
+    - completed_srcids (set or None): Pre-loaded set of SRCIDs
+        already present in fit_results*.fits files. Used by
+        --skip_completed when chains have been cleaned up.
 
     Returns:
     - (error_code, results_dict_or_None)
@@ -81,10 +134,10 @@ def process_one_source(srcid, args, output_dir,
     if not os.path.exists(src_dir):
         os.makedirs(src_dir, exist_ok=True)
 
-    # Skip if already completed (chain.fits exists for
-    # requested model).  Glob for any subdirectory matching
-    # the model name prefix that contains a chain.fits file.
+    # Skip if already completed: check chain.fits on disk
+    # OR presence in fit_results*.fits tables.
     if getattr(args, 'skip_completed', False):
+        # Check 1: chain.fits still on disk
         import glob
         chain_pattern = os.path.join(
             src_dir, f"{args.model_name}*", "chain.fits")
@@ -92,6 +145,11 @@ def process_one_source(srcid, args, output_dir,
         if existing:
             print(f"   Skipping SRCID {srcid} "
                   f"(chain.fits already exists)")
+            return (0, None)
+        # Check 2: already in results FITS table
+        if completed_srcids and srcid in completed_srcids:
+            print(f"   Skipping SRCID {srcid} "
+                  f"(already in fit_results)")
             return (0, None)
 
     # Per-source log file
@@ -366,6 +424,10 @@ def process_one_source(srcid, args, output_dir,
                         args.export_filename,
                         log_file=log_file,
                         global_results=True)
+                # Clean up after export (single-source mode)
+                if args.cleanup_chains:
+                    _cleanup_chain_dir(
+                        results, srcid, output_dir)
 
             return (0, results)
         else:
@@ -488,6 +550,11 @@ def main():
         "--use_bxa", action="store_true",
         help="use BXA fitting instead of XSPEC")
     parser.add_argument(
+        "--cleanup_chains", action="store_true",
+        help="Delete chain.fits and corner.png after "
+             "extracting summary statistics. Saves disk "
+             "space at the cost of losing full posteriors.")
+    parser.add_argument(
         "--export_results_fits", action="store_true",
         help="Export BXA fit results to updated FITS file")
     parser.add_argument(
@@ -546,6 +613,17 @@ def main():
             subdir=args.subdir)
         print(f" Cache built: {len(dir_cache)} directories")
 
+        # Pre-load completed SRCIDs from existing results
+        # (works even when chain files have been cleaned up)
+        completed = set()
+        if getattr(args, 'skip_completed', False):
+            print(" Scanning existing fit_results*.fits "
+                  "for completed SRCIDs...")
+            completed = _load_completed_srcids(output_dir)
+            if completed:
+                print(f" Found {len(completed)} already-"
+                      f"completed SRCIDs")
+
         # Process each source
         accumulated_results = []
         n_success = 0
@@ -560,11 +638,16 @@ def main():
                 code, results = process_one_source(
                     srcid, args, output_dir,
                     srcid_obsid_mapping=catalog_mapping,
-                    dir_listing_cache=dir_cache)
+                    dir_listing_cache=dir_cache,
+                    completed_srcids=completed)
                 if code == 0 and results is not None:
                     accumulated_results.append(
                         (srcid, results))
                     n_success += 1
+                    # Clean up chain files to save disk
+                    if args.cleanup_chains:
+                        _cleanup_chain_dir(
+                            results, srcid, output_dir)
                 else:
                     n_fail += 1
                     logger.info(

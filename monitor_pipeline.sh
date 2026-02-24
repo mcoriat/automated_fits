@@ -37,18 +37,38 @@ fi
 # Count source directories (each SRCID gets one)
 N_STARTED=$(find "${OUTPUT_DIR}" -maxdepth 1 -type d -name '[0-9]*' 2>/dev/null | wc -l | tr -d ' ')
 
-# Count successful fits (chain.fits files)
+# Count successful fits (chain.fits files on disk)
 N_CHAINS=$(find "${OUTPUT_DIR}" -name "chain.fits" -type f 2>/dev/null | wc -l | tr -d ' ')
 
-# Count per model
+# Count successful fits from logs (works with --cleanup_chains)
+LOG_DIR="${OUTPUT_DIR}/chunk_logs"
+N_SUCCESS_LOGS=0
+if [ -d "${LOG_DIR}" ]; then
+    N_SUCCESS_LOGS=$(grep -rh "Fit completed successfully" "${LOG_DIR}"/ 2>/dev/null | wc -l | tr -d ' ')
+fi
+
+# Use whichever count is higher (chains on disk or from logs)
+if [ "${N_SUCCESS_LOGS}" -gt "${N_CHAINS}" ]; then
+    N_SUCCESS=${N_SUCCESS_LOGS}
+else
+    N_SUCCESS=${N_CHAINS}
+fi
+
+# Error rate
+if [ "${N_STARTED}" -gt 0 ]; then
+    ERROR_RATE=$(echo "scale=1; 100 * (1 - ${N_SUCCESS} / ${N_STARTED})" | bc 2>/dev/null || echo "?")
+else
+    ERROR_RATE="—"
+fi
+
 echo " Overall progress:"
 echo "   Total SRCIDs:    ${TOTAL}"
-echo "   Started:         ${N_STARTED}"
-echo "   Chains produced: ${N_CHAINS}"
+echo "   Processed:       ${N_STARTED}"
+echo "   Successful fits: ${N_SUCCESS}"
+echo "   Error rate:      ${ERROR_RATE}%"
 echo ""
 
 # Per-chunk progress from log files
-LOG_DIR="${OUTPUT_DIR}/chunk_logs"
 if [ -d "${LOG_DIR}" ]; then
     echo " Per-chunk status:"
     echo " ─────────────────────────────────────────"
@@ -93,18 +113,39 @@ DISK_USAGE=$(du -sh "${OUTPUT_DIR}" 2>/dev/null | cut -f1)
 echo " Disk usage: ${DISK_USAGE}"
 
 # Estimate completion
-if [ "${N_CHAINS}" -gt 0 ] && [ "${TOTAL}" != "?" ]; then
-    # Find earliest chain.fits to estimate start time
-    FIRST_CHAIN=$(find "${OUTPUT_DIR}" -name "chain.fits" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | head -1 | cut -d' ' -f1)
-    if [ -n "${FIRST_CHAIN}" ]; then
+if [ "${N_STARTED}" -gt 0 ] && [ "${TOTAL}" != "?" ]; then
+    # Find elapsed time from the oldest chunk log file
+    FIRST_LOG=$(find "${LOG_DIR}" -name "chunk_*.log" -type f -printf '%T@\n' 2>/dev/null | sort -n | head -1)
+    if [ -n "${FIRST_LOG}" ]; then
         NOW=$(date +%s)
-        ELAPSED=$(echo "${NOW} - ${FIRST_CHAIN}" | bc 2>/dev/null || echo 0)
-        if [ "${ELAPSED%.*}" -gt 0 ] && [ "${N_CHAINS}" -gt 0 ]; then
-            RATE=$(echo "scale=2; ${N_CHAINS} / (${ELAPSED} / 3600)" | bc 2>/dev/null || echo "?")
-            REMAINING=$(echo "scale=0; (${TOTAL} - ${N_STARTED}) / (${N_CHAINS} / (${ELAPSED} / 3600))" | bc 2>/dev/null || echo "?")
+        ELAPSED=$(echo "${NOW} - ${FIRST_LOG}" | bc 2>/dev/null || echo 0)
+        ELAPSED_INT=${ELAPSED%.*}
+        if [ "${ELAPSED_INT}" -gt 0 ]; then
+            ELAPSED_H=$(echo "scale=1; ${ELAPSED} / 3600" | bc 2>/dev/null || echo "?")
+
+            # Processing rate (all sources including fast failures)
+            PROC_RATE=$(echo "scale=0; ${N_STARTED} / (${ELAPSED} / 3600)" | bc 2>/dev/null || echo "?")
+
+            # Successful fit rate
+            FIT_RATE=$(echo "scale=1; ${N_SUCCESS} / (${ELAPSED} / 3600)" | bc 2>/dev/null || echo "?")
+
+            # ETA based on processing rate (accounts for error rate)
+            REMAINING_SOURCES=$(echo "${TOTAL} - ${N_STARTED}" | bc 2>/dev/null || echo 0)
+            ETA_H=$(echo "scale=1; ${REMAINING_SOURCES} / (${N_STARTED} / (${ELAPSED} / 3600))" | bc 2>/dev/null || echo "?")
+
+            # Expected total successful fits
+            if [ "${N_STARTED}" -gt 0 ]; then
+                EXPECTED_FITS=$(echo "scale=0; ${TOTAL} * ${N_SUCCESS} / ${N_STARTED}" | bc 2>/dev/null || echo "?")
+            else
+                EXPECTED_FITS="?"
+            fi
+
             echo ""
-            echo " Throughput: ~${RATE} chains/hour"
-            echo " Est. remaining: ~${REMAINING} hours"
+            echo " Timing (elapsed: ${ELAPSED_H}h):"
+            echo "   Processing rate: ~${PROC_RATE} sources/hour"
+            echo "   Fit rate:        ~${FIT_RATE} fits/hour"
+            echo "   Expected fits:   ~${EXPECTED_FITS} (of ${TOTAL} total)"
+            echo "   Est. remaining:  ~${ETA_H} hours"
         fi
     fi
 fi
