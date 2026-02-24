@@ -120,13 +120,16 @@ echo " Disk usage: ${DISK_USAGE}"
 
 # Estimate completion (only if enough data)
 if [ "${N_TOUCHED}" -gt 0 ] && [ "${TOTAL}" != "?" ]; then
-    # Find elapsed time from the oldest chunk log file
-    FIRST_LOG=$(find "${LOG_DIR}" -name "chunk_*.log" -type f -printf '%T@\n' 2>/dev/null | sort -n | head -1)
-    if [ -n "${FIRST_LOG}" ]; then
+    # Read start time from marker file written by run_pipeline.sh
+    START_FILE="${OUTPUT_DIR}/.pipeline_start_time"
+    PIPELINE_START=""
+    if [ -f "${START_FILE}" ]; then
+        PIPELINE_START=$(cat "${START_FILE}" | tr -d '[:space:]')
+    fi
+    if [ -n "${PIPELINE_START}" ]; then
         NOW=$(date +%s)
-        ELAPSED=$(echo "${NOW} - ${FIRST_LOG}" | bc 2>/dev/null || echo 0)
-        ELAPSED_INT=${ELAPSED%.*}
-        ELAPSED_INT=${ELAPSED_INT:-0}
+        ELAPSED=$((NOW - PIPELINE_START))
+        ELAPSED_INT=${ELAPSED}
 
         # Only show rates after at least 5 minutes of data
         if [ "${ELAPSED_INT}" -gt 300 ] 2>/dev/null; then
