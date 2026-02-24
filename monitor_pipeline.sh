@@ -133,17 +133,17 @@ if [ "${N_TOUCHED}" -gt 0 ] && [ "${TOTAL}" != "?" ]; then
 
         # Only show rates after at least 5 minutes of data
         if [ "${ELAPSED_INT}" -gt 300 ] 2>/dev/null; then
-            ELAPSED_H=$(echo "scale=1; ${ELAPSED} / 3600" | bc 2>/dev/null || echo "?")
+            # bc omits leading zero; printf adds it
+            ELAPSED_H=$(printf "%.1f" "$(echo "scale=2; ${ELAPSED} / 3600" | bc 2>/dev/null)" 2>/dev/null || echo "?")
 
-            # Processing rate (all sources including fast failures and skips)
-            PROC_RATE=$(echo "scale=0; ${N_TOUCHED} / (${ELAPSED} / 3600)" | bc 2>/dev/null || echo "?")
+            # Rates: use N*3600/ELAPSED to avoid intermediate division by zero
+            PROC_RATE=$(echo "scale=0; ${N_TOUCHED} * 3600 / ${ELAPSED}" | bc 2>/dev/null || echo "?")
 
-            # Successful fit rate
-            FIT_RATE=$(echo "scale=1; ${N_SUCCESS} / (${ELAPSED} / 3600)" | bc 2>/dev/null || echo "?")
+            FIT_RATE=$(printf "%.1f" "$(echo "scale=2; ${N_SUCCESS} * 3600 / ${ELAPSED}" | bc 2>/dev/null)" 2>/dev/null || echo "?")
 
             # ETA based on total processing rate
             REMAINING_SOURCES=$(echo "${TOTAL} - ${N_TOUCHED}" | bc 2>/dev/null || echo 0)
-            ETA_H=$(echo "scale=1; ${REMAINING_SOURCES} * ${ELAPSED} / ${N_TOUCHED} / 3600" | bc 2>/dev/null || echo "?")
+            ETA_H=$(printf "%.1f" "$(echo "scale=2; ${REMAINING_SOURCES} * ${ELAPSED} / ${N_TOUCHED} / 3600" | bc 2>/dev/null)" 2>/dev/null || echo "?")
 
             # Expected total successful fits
             if [ "${N_PROCESSED}" -gt 0 ]; then
