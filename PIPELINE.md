@@ -80,7 +80,6 @@ For each source, the pipeline:
 │   └── product/          # or 'pps' for 4XMM
 │       ├── SRSPEC0001...  # Source spectra (hex SRC_NUM)
 │       ├── BGSPEC0001...  # Background spectra
-│       ├── *.rmf          # Response matrices
 │       └── *.arf          # Ancillary response files
 ├── {OBS_ID_2}/
 │   └── product/
@@ -90,6 +89,8 @@ For each source, the pipeline:
 
 Spectrum filenames follow the pattern `SRSPEC{hex(SRC_NUM)}` (e.g.,
 `SRSPEC0067` for SRC_NUM=103).
+
+Response matrices `*.rmf` in `RESPONSES_DIR`
 
 ### Stacked Catalogue
 
