@@ -31,7 +31,7 @@ REPO_DIR="/home/mcoriat/Work/XMM/5XMM/automated_fits"
 DATA_DIR="/mnt/xmmcat/5XMM_data/Spectra"
 RESPONSES_DIR="/home/mcoriat/Work/XMM/5XMM/RESPONSES"
 CATALOG="${REPO_DIR}/5xmm_matched_for_pipeline.fits"
-OUTPUT_DIR="/home/mcoriat/Work/XMM/5XMM/pipeline_output"
+OUTPUT_DIR="/mnt/xmmcat/5XMM_data/Automated_Fits_Results"
 SRCID_FILE="${REPO_DIR}/srcids.txt"
 
 # Default parallel settings
