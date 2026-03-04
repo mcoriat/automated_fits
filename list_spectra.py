@@ -61,9 +61,10 @@ def list_spectra(srcid, srcid_obsid_dict, data_dir,
         # converting srcnum to hex, with no prefix
         srchex = format(srcnum, '04X')
         # going through them to detect spectra for srcnum
+        # Only match FITS files (.FTZ, .fits), not previews (.PNG)
         pattern = 'SRSPEC' + srchex
         for file in file_list:
-            if pattern in file:
+            if pattern in file and file.upper().endswith(('.FTZ', '.FITS')):
                 list_spectra.append(path + file)
         #
     return list_spectra

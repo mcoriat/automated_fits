@@ -120,11 +120,11 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
                             # using header_info from get_spectral_counts (avoids re-opening the file)
                             header_info=spec_tuple[7]
                             response=header_info['RESPFILE']
-                            # full path to and name of rmf file depend on whetherpn/MOS
+                            # full path to and name of rmf file depend on whether pn/MOS
                             if (pn):
-                                # adding _v19.0 at the end of the root
-                                response19=response.split('.')[0]+'_v19.0.rmf'
-                                rmf_file=os.path.join(responses_dir+'/PN',response19)
+                                # adding _v22.0 at the end of the root
+                                response22=response.split('.')[0]+'_v22.0.rmf'
+                                rmf_file=os.path.join(responses_dir+'/PN',response22)
                             else:
                                 # finding out the resolution of the rmf
                                 specdelt=header_info['SPECDELT']
