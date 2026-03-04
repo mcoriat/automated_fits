@@ -350,20 +350,22 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
         outputfiles_basename=os.path.join(output_dir))
 
     # Speed-tuned run:
-    # - n_live_points: 50 per free parameter (enough for
-    #   3-param models; default 400 is overkill)
-    # - evidence_tolerance=0.5: stop sooner (default ~0.1
-    #   is unnecessarily precise for parameter estimation)
+    # - n_live_points: 35 per free parameter (min 100);
+    #   sufficient for smooth unimodal posteriors like
+    #   absorbed powerlaw (3 params → 105 live points)
+    # - evidence_tolerance=1.0: posteriors converge well
+    #   before evidence integral; safe for parameter
+    #   estimation (use 0.5 for model comparison)
     # - speed="safe": use BXA's default step sampler
     # - Lepsilon=0.1: default likelihood tolerance
-    n_live = max(50 * n_free, 100)
+    n_live = max(35 * n_free, 100)
     logger.info(
         f"   BXA run: {n_free} free params, "
-        f"{n_live} live points, dlogz=0.5")
+        f"{n_live} live points, dlogz=1.0")
     solver.run(
         resume=False,
         n_live_points=n_live,
-        evidence_tolerance=0.5,
+        evidence_tolerance=1.0,
         speed="safe",
         Lepsilon=0.1)
 
