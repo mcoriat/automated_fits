@@ -20,6 +20,10 @@
 
 set -euo pipefail
 
+# Raise file descriptor limit to prevent "Too many open files"
+# during long BXA fitting runs (XSPEC + ultranest + matplotlib)
+ulimit -n 4096 2>/dev/null || true
+
 # ==============================================================
 # CONFIGURATION — edit these paths for your setup
 # ==============================================================

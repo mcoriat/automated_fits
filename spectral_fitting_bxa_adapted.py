@@ -1,4 +1,5 @@
 import os
+import gc
 import datetime
 
 # Prevent numpy/MKL/OpenMP from spawning threads that
@@ -293,6 +294,10 @@ def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
     except Exception as e:
         logger.warning(f"   Background check failed for {srcid}: {e}")
         return None
+    finally:
+        # Always clean up XSPEC state to avoid fd leaks
+        AllData.clear()
+        AllModels.clear()
 
 
 
@@ -378,11 +383,20 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
                 fig = corner.corner(filtered_samples, labels=filtered_labels, show_titles=True, title_fmt=".3e")
                 corner_path = os.path.join(output_dir, "corner.png")
                 fig.savefig(corner_path)
+                plt.close(fig)
                 logger.info(f'   Saved corner plot to file {corner_path} ')
 
         posterior_median = np.median(samples_array, axis=0)
         posterior_p16    = np.percentile(samples_array, 16, axis=0)
         posterior_p84    = np.percentile(samples_array, 84, axis=0)
+
+        # Clean up XSPEC state and force garbage collection
+        # to prevent file descriptor leaks across fits
+        AllData.clear()
+        AllModels.clear()
+        plt.close('all')
+        gc.collect()
+
         return {
             "parameter_names": labels,
             "posterior_median": posterior_median,
@@ -394,6 +408,11 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
 
     else:
         logger.error(f'   Chain file {chain_file} not found after BXA run ')
+        # Clean up even on failure
+        AllData.clear()
+        AllModels.clear()
+        plt.close('all')
+        gc.collect()
         return {"flag": 4}
 
 
@@ -576,7 +595,11 @@ def export_bxa_results_to_fits_bulk(
 
 
 def _write_rows_to_fits(rows, fits_path):
-    """Helper to write a list of row dicts to a FITS table."""
+    """Helper to write a list of row dicts to a FITS table.
+
+    Uses atomic write (temp file + rename) so that a crash
+    during the write cannot destroy previously flushed data.
+    """
     if len(rows) == 0:
         return
 
@@ -595,5 +618,10 @@ def _write_rows_to_fits(rows, fits_path):
                 row.get(col, np.nan) for row in rows]
 
     table = Table(col_data)
-    table.write(fits_path, overwrite=True)
+
+    # Atomic write: write to a temp file first, then rename.
+    # If the write crashes, the original file is untouched.
+    tmp_path = fits_path + ".tmp"
+    table.write(tmp_path, overwrite=True)
+    os.replace(tmp_path, fits_path)
 

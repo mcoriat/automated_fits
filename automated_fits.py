@@ -31,6 +31,7 @@ Output error codes
 import argparse
 import os
 import sys
+import gc
 import shutil
 import logging
 from read_stacked_catalog import (read_stacked_catalog,
@@ -675,6 +676,10 @@ def main():
                       f"with exception: {e}")
             finally:
                 os.chdir(original_cwd)
+                # Periodic garbage collection to reclaim
+                # any leaked file descriptors
+                if (i + 1) % 100 == 0:
+                    gc.collect()
 
         # Final export (writes all results, including
         # any accumulated since the last flush)
