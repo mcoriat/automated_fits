@@ -12,7 +12,7 @@
 #
 # ==============================================================
 
-OUTPUT_DIR="${1:-/home/mcoriat/Work/XMM/5XMM/pipeline_output}"
+OUTPUT_DIR="${1:-/mnt/xmmcat/5XMM_data/Automated_Fits_Results}"
 
 if [ ! -d "${OUTPUT_DIR}" ]; then
     echo "ERROR: Output directory not found: ${OUTPUT_DIR}"
