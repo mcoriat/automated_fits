@@ -34,6 +34,20 @@ import sys
 import gc
 import shutil
 import logging
+
+
+def _safe_print(*args, **kwargs):
+    """print() wrapper that survives broken stdout (e.g. NFS glitch
+    killing the log file descriptor).  Falls back to logger."""
+    try:
+        print(*args, **kwargs)
+    except OSError:
+        # stdout fd is dead — log instead so we don't lose
+        # the message entirely
+        msg = " ".join(str(a) for a in args)
+        logging.getLogger().info(f"(stdout dead) {msg}")
+
+
 from read_stacked_catalog import (read_stacked_catalog,
                                   read_stacked_catalog_batch)
 from list_spectra import (list_spectra,
@@ -636,8 +650,8 @@ def main():
             # Save/restore cwd (BXA + XSPEC chdir)
             original_cwd = os.getcwd()
             try:
-                print(f"\n[{i+1}/{n_total}] "
-                      f"Processing SRCID {srcid}")
+                _safe_print(f"\n[{i+1}/{n_total}] "
+                            f"Processing SRCID {srcid}")
                 code, results = process_one_source(
                     srcid, args, output_dir,
                     srcid_obsid_mapping=catalog_mapping,
@@ -656,8 +670,8 @@ def main():
                     # visible to --skip_completed
                     if (args.export_results_fits and
                             n_success % FLUSH_EVERY == 0):
-                        print(f"   Flushing {len(accumulated_results)} "
-                              f"results to {args.export_filename}")
+                        _safe_print(f"   Flushing {len(accumulated_results)} "
+                                    f"results to {args.export_filename}")
                         export_bxa_results_to_fits_bulk(
                             accumulated_results,
                             output_base=output_dir,
@@ -672,29 +686,29 @@ def main():
                 logger.error(
                     f"SRCID {srcid}: unhandled exception: "
                     f"{e}")
-                print(f"   ERROR: SRCID {srcid} failed "
-                      f"with exception: {e}")
+                _safe_print(f"   ERROR: SRCID {srcid} failed "
+                            f"with exception: {e}")
             finally:
                 os.chdir(original_cwd)
-                # Periodic garbage collection to reclaim
-                # any leaked file descriptors
-                if (i + 1) % 100 == 0:
+                # Garbage-collect every 10 sources to reclaim
+                # leaked file descriptors (ultranest HDF5 etc.)
+                if (i + 1) % 10 == 0:
                     gc.collect()
 
         # Final export (writes all results, including
         # any accumulated since the last flush)
         if args.export_results_fits and accumulated_results:
             if len(accumulated_results) > n_flushed:
-                print(f"\n Exporting {len(accumulated_results)} "
-                      f"fit results to FITS...")
+                _safe_print(f"\n Exporting {len(accumulated_results)} "
+                            f"fit results to FITS...")
             export_bxa_results_to_fits_bulk(
                 accumulated_results,
                 output_base=output_dir,
                 fits_filename=args.export_filename)
 
-        print(f"\n\n Batch processing complete: "
-              f"{n_success} succeeded, {n_fail} failed "
-              f"out of {n_total} total.\n")
+        _safe_print(f"\n\n Batch processing complete: "
+                    f"{n_success} succeeded, {n_fail} failed "
+                    f"out of {n_total} total.\n")
         logger.info(
             f"Batch complete: {n_success} succeeded, "
             f"{n_fail} failed out of {n_total}")

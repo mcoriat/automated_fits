@@ -369,13 +369,19 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
         speed="safe",
         Lepsilon=0.1)
 
+    # Save paramnames before releasing the solver
+    labels = solver.paramnames
+
+    # Release the solver (and its ultranest sampler /
+    # HDF5 pointstore) to avoid file descriptor leaks
+    del solver
+
     # Read chain, make plots, return summaries
     chain_file = os.path.join(output_dir, "chain.fits")
     if os.path.exists(chain_file):
         with fits.open(chain_file) as hdul:
             samples = hdul[1].data
             samples_array = np.column_stack([samples[name] for name in samples.names])
-            labels = solver.paramnames
             stds = np.std(samples_array, axis=0)
             valid_cols = stds > 0
             filtered_samples = samples_array[:, valid_cols]
