@@ -690,10 +690,9 @@ def main():
                             f"with exception: {e}")
             finally:
                 os.chdir(original_cwd)
-                # Garbage-collect every 10 sources to reclaim
-                # leaked file descriptors (ultranest HDF5 etc.)
-                if (i + 1) % 10 == 0:
-                    gc.collect()
+                # Garbage-collect after every source to reclaim
+                # any leaked file descriptors promptly
+                gc.collect()
 
         # Final export (writes all results, including
         # any accumulated since the last flush)

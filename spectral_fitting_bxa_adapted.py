@@ -8,6 +8,10 @@ os.environ.setdefault('OMP_NUM_THREADS', '1')
 os.environ.setdefault('MKL_NUM_THREADS', '1')
 os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
 
+# Use offscreen Qt backend to prevent ICE/PyQt5 segfault
+# at exit (no X11 session manager needed for headless fits)
+os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+
 from xspec import *
 Fit.query = "no"  # Disable interactive prompts during fits
 import bxa.xspec as bxa
@@ -358,6 +362,9 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
     #   estimation (use 0.5 for model comparison)
     # - speed="safe": use BXA's default step sampler
     # - Lepsilon=0.1: default likelihood tolerance
+    # - max_ncalls=500000: hard cap to prevent pathological
+    #   sources from running for hours (typical fit uses
+    #   ~5000-50000 calls; 500k is a generous safety net)
     n_live = max(35 * n_free, 100)
     logger.info(
         f"   BXA run: {n_free} free params, "
@@ -367,14 +374,35 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
         n_live_points=n_live,
         evidence_tolerance=1.0,
         speed="safe",
-        Lepsilon=0.1)
+        Lepsilon=0.1,
+        max_ncalls=500000)
 
     # Save paramnames before releasing the solver
     labels = solver.paramnames
 
-    # Release the solver (and its ultranest sampler /
-    # HDF5 pointstore) to avoid file descriptor leaks
+    # --- Thorough fd cleanup ---
+    # 1. Close ultranest's HDF5 pointstore explicitly
+    try:
+        sampler = getattr(solver, 'solver', None)
+        if sampler is not None:
+            ps = getattr(sampler, 'pointstore', None)
+            if ps is not None and hasattr(ps, 'close'):
+                ps.close()
+    except Exception:
+        pass
+
+    # 2. Delete the solver object
     del solver
+
+    # 3. Close ultranest's logger FileHandlers (it creates
+    #    a new debug.log handler per run but never closes them)
+    for lname in ('ultranest', 'ultranest.integrator',
+                  'ultranest.mlfriends', 'ultranest.stepsampler'):
+        ul = logging.getLogger(lname)
+        for h in ul.handlers[:]:
+            if isinstance(h, logging.FileHandler):
+                ul.removeHandler(h)
+                h.close()
 
     # Read chain, make plots, return summaries
     chain_file = os.path.join(output_dir, "chain.fits")
@@ -399,7 +427,6 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
         posterior_p84    = np.percentile(samples_array, 84, axis=0)
 
         # Clean up XSPEC state and force garbage collection
-        # to prevent file descriptor leaks across fits
         AllData.clear()
         AllModels.clear()
         plt.close('all')
