@@ -1,5 +1,6 @@
 import os
 import gc
+import signal
 import datetime
 
 # Prevent numpy/MKL/OpenMP from spawning threads that
@@ -29,7 +30,15 @@ import logging
 logger = logging.getLogger()   # root logger
 
 
-    
+class BXATimeout(Exception):
+    """Raised when a BXA fit exceeds its wallclock time limit."""
+    pass
+
+
+def _bxa_timeout_handler(signum, frame):
+    raise BXATimeout("BXA fit exceeded time limit")
+
+
 def get_model_and_priors(model_name, redshift=0.0,
                          flux_band=(0.5, 10.0),
                          prefit=True):
@@ -362,20 +371,31 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
     #   estimation (use 0.5 for model comparison)
     # - speed="safe": use BXA's default step sampler
     # - Lepsilon=0.1: default likelihood tolerance
-    # - max_ncalls=500000: hard cap to prevent pathological
-    #   sources from running for hours (typical fit uses
-    #   ~5000-50000 calls; 500k is a generous safety net)
+    # - SIGALRM timeout: 30 min hard cap to prevent
+    #   pathological sources from blocking a worker
+    BXA_TIMEOUT = 1800  # seconds (30 minutes)
     n_live = max(35 * n_free, 100)
     logger.info(
         f"   BXA run: {n_free} free params, "
         f"{n_live} live points, dlogz=1.0")
-    solver.run(
-        resume=False,
-        n_live_points=n_live,
-        evidence_tolerance=1.0,
-        speed="safe",
-        Lepsilon=0.1,
-        max_ncalls=500000)
+
+    # Set wallclock alarm so pathological fits don't run forever
+    old_handler = signal.signal(signal.SIGALRM, _bxa_timeout_handler)
+    signal.alarm(BXA_TIMEOUT)
+    try:
+        solver.run(
+            resume=False,
+            n_live_points=n_live,
+            evidence_tolerance=1.0,
+            speed="safe",
+            Lepsilon=0.1)
+    except BXATimeout:
+        logger.warning(
+            f"   BXA fit timed out after {BXA_TIMEOUT}s "
+            f"for source {srcid}")
+    finally:
+        signal.alarm(0)  # cancel the alarm
+        signal.signal(signal.SIGALRM, old_handler)
 
     # Save paramnames before releasing the solver
     labels = solver.paramnames
