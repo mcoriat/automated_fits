@@ -21,8 +21,11 @@
 set -euo pipefail
 
 # Raise file descriptor limit to prevent "Too many open files"
-# during long BXA fitting runs (XSPEC + ultranest + matplotlib)
-ulimit -n 4096 2>/dev/null || true
+# during long BXA fitting runs (XSPEC + ultranest + matplotlib).
+# The outer fd fence in automated_fits.py should keep the
+# steady-state count low, but a generous limit avoids any
+# edge-case exhaustion before the fence runs.
+ulimit -n 16384 2>/dev/null || ulimit -n 4096 2>/dev/null || true
 
 # ==============================================================
 # CONFIGURATION — edit these paths for your setup

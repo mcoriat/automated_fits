@@ -48,6 +48,49 @@ def _safe_print(*args, **kwargs):
         logging.getLogger().info(f"(stdout dead) {msg}")
 
 
+# ── File-descriptor fence helpers ──────────────────────────
+# These catch fd leaks from ANY library (XSPEC/cfitsio, BXA,
+# ultranest, matplotlib, h5py) by comparing the set of open
+# fds before and after processing a source.
+
+def _get_open_fds():
+    """Return set of open fd numbers (Linux /proc/self/fd)."""
+    try:
+        return set(int(fd) for fd in os.listdir('/proc/self/fd'))
+    except OSError:
+        return set()
+
+
+# Extensions / prefixes of fds that must NOT be closed —
+# they are long-lived library caches, not per-source leaks.
+_FD_KEEP_SUFFIXES = (
+    '.ttf', '.otf', '.woff', '.woff2',   # matplotlib fonts
+    '.so', '.dylib',                       # shared libraries
+    '.pyc', '.pyo',                        # compiled Python
+)
+_FD_KEEP_PREFIXES = (
+    '/dev/', '/proc/', '/sys/',            # OS virtual fs
+    'pipe:', 'socket:', 'anon_inode:',     # non-file fds
+)
+
+
+def _is_safe_to_close(fd):
+    """Check if a leaked fd can be safely closed.
+    Returns True for fit-related files (HDF5, FITS, logs),
+    False for library caches (fonts, .so) and OS resources."""
+    try:
+        target = os.readlink(f'/proc/self/fd/{fd}')
+    except OSError:
+        return False
+    for pfx in _FD_KEEP_PREFIXES:
+        if target.startswith(pfx):
+            return False
+    for sfx in _FD_KEEP_SUFFIXES:
+        if target.endswith(sfx):
+            return False
+    return True
+
+
 from read_stacked_catalog import (read_stacked_catalog,
                                   read_stacked_catalog_batch)
 from list_spectra import (list_spectra,
@@ -176,11 +219,15 @@ def process_one_source(srcid, args, output_dir,
     # Set up a file handler for this source
     # (remove previous handlers to avoid cross-contamination)
     root_logger = logging.getLogger()
-    # Remove all existing file handlers
+    # Remove all existing file handlers (may already be closed
+    # by the outer fd fence in the batch loop)
     for h in root_logger.handlers[:]:
         if isinstance(h, logging.FileHandler):
             root_logger.removeHandler(h)
-            h.close()
+            try:
+                h.close()
+            except Exception:
+                pass
     fh = logging.FileHandler(log_file, mode='w')
     fh.setLevel(logging.INFO)
     root_logger.addHandler(fh)
@@ -649,6 +696,11 @@ def main():
         for i, srcid in enumerate(srcids):
             # Save/restore cwd (BXA + XSPEC chdir)
             original_cwd = os.getcwd()
+
+            # FD fence: snapshot BEFORE processing this source.
+            # Anything new after process_one_source() is a leak.
+            fds_before = _get_open_fds()
+
             try:
                 _safe_print(f"\n[{i+1}/{n_total}] "
                             f"Processing SRCID {srcid}")
@@ -690,9 +742,39 @@ def main():
                             f"with exception: {e}")
             finally:
                 os.chdir(original_cwd)
-                # Garbage-collect after every source to reclaim
-                # any leaked file descriptors promptly
+
+                # 1. Close the per-source FileHandler so its
+                #    fd is released before the fence runs
+                root_logger = logging.getLogger()
+                for h in root_logger.handlers[:]:
+                    if isinstance(h, logging.FileHandler):
+                        root_logger.removeHandler(h)
+                        try:
+                            h.close()
+                        except Exception:
+                            pass
+
+                # 2. Garbage-collect to release ref-counted fds
                 gc.collect()
+
+                # 3. FD fence: force-close any leaked fds.
+                #    Catches leaks from XSPEC/cfitsio, BXA,
+                #    ultranest, h5py, matplotlib — everything.
+                fds_after = _get_open_fds()
+                leaked = fds_after - fds_before
+                if leaked:
+                    n_closed = 0
+                    for fd in leaked:
+                        if _is_safe_to_close(fd):
+                            try:
+                                os.close(fd)
+                                n_closed += 1
+                            except OSError:
+                                pass
+                    if n_closed:
+                        _safe_print(
+                            f"   [fd-fence] Closed {n_closed} "
+                            f"leaked fds (of {len(leaked)} new)")
 
         # Final export (writes all results, including
         # any accumulated since the last flush)
