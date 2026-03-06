@@ -39,6 +39,16 @@ def _bxa_timeout_handler(signum, frame):
     raise BXATimeout("BXA fit exceeded time limit")
 
 
+def _get_open_fds():
+    """Return set of open fd numbers (Linux /proc/self/fd).
+    Used as a safety net to detect and close leaked file
+    descriptors after each BXA fit, regardless of source."""
+    try:
+        return set(int(fd) for fd in os.listdir('/proc/self/fd'))
+    except OSError:
+        return set()
+
+
 def get_model_and_priors(model_name, redshift=0.0,
                          flux_band=(0.5, 10.0),
                          prefit=True):
@@ -379,6 +389,9 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
         f"   BXA run: {n_free} free params, "
         f"{n_live} live points, dlogz=1.0")
 
+    # Snapshot open fds BEFORE the fit so we can detect leaks
+    fds_before = _get_open_fds()
+
     # Set wallclock alarm so pathological fits don't run forever
     bxa_failed = False
     old_handler = signal.signal(signal.SIGALRM, _bxa_timeout_handler)
@@ -430,6 +443,22 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
                 if isinstance(h, logging.FileHandler):
                     ul.removeHandler(h)
                     h.close()
+
+        # 4. FD fence: force-close any file descriptors that
+        #    leaked despite the targeted cleanup above.
+        #    Only closes fds opened AFTER our snapshot — safe
+        #    for pre-existing fds (stdin/out/err, log files).
+        fds_after = _get_open_fds()
+        leaked = fds_after - fds_before
+        if leaked:
+            logger.warning(
+                f"   Closing {len(leaked)} leaked fds "
+                f"after BXA fit")
+            for fd in leaked:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
     # If solver.run() failed, clean up XSPEC and return
     if bxa_failed:
