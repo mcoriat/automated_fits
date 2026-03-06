@@ -380,6 +380,7 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
         f"{n_live} live points, dlogz=1.0")
 
     # Set wallclock alarm so pathological fits don't run forever
+    bxa_failed = False
     old_handler = signal.signal(signal.SIGALRM, _bxa_timeout_handler)
     signal.alarm(BXA_TIMEOUT)
     try:
@@ -393,36 +394,50 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
         logger.warning(
             f"   BXA fit timed out after {BXA_TIMEOUT}s "
             f"for source {srcid}")
+        bxa_failed = True
+    except Exception as e:
+        logger.error(
+            f"   BXA solver failed for {srcid}: {e}")
+        bxa_failed = True
     finally:
         signal.alarm(0)  # cancel the alarm
         signal.signal(signal.SIGALRM, old_handler)
 
-    # Save paramnames before releasing the solver
-    labels = solver.paramnames
+        # --- Thorough fd cleanup (MUST run regardless) ---
+        # Save paramnames before releasing the solver
+        labels = solver.paramnames
 
-    # --- Thorough fd cleanup ---
-    # 1. Close ultranest's HDF5 pointstore explicitly
-    try:
-        sampler = getattr(solver, 'solver', None)
-        if sampler is not None:
-            ps = getattr(sampler, 'pointstore', None)
-            if ps is not None and hasattr(ps, 'close'):
-                ps.close()
-    except Exception:
-        pass
+        # 1. Close ultranest's HDF5 pointstore explicitly
+        try:
+            sampler = getattr(solver, 'solver', None)
+            if sampler is not None:
+                ps = getattr(sampler, 'pointstore', None)
+                if ps is not None and hasattr(ps, 'close'):
+                    ps.close()
+        except Exception:
+            pass
 
-    # 2. Delete the solver object
-    del solver
+        # 2. Delete the solver object
+        del solver
 
-    # 3. Close ultranest's logger FileHandlers (it creates
-    #    a new debug.log handler per run but never closes them)
-    for lname in ('ultranest', 'ultranest.integrator',
-                  'ultranest.mlfriends', 'ultranest.stepsampler'):
-        ul = logging.getLogger(lname)
-        for h in ul.handlers[:]:
-            if isinstance(h, logging.FileHandler):
-                ul.removeHandler(h)
-                h.close()
+        # 3. Close ultranest's logger FileHandlers (it creates
+        #    a new debug.log handler per run, never closes them)
+        for lname in ('ultranest', 'ultranest.integrator',
+                      'ultranest.mlfriends',
+                      'ultranest.stepsampler'):
+            ul = logging.getLogger(lname)
+            for h in ul.handlers[:]:
+                if isinstance(h, logging.FileHandler):
+                    ul.removeHandler(h)
+                    h.close()
+
+    # If solver.run() failed, clean up XSPEC and return
+    if bxa_failed:
+        AllData.clear()
+        AllModels.clear()
+        plt.close('all')
+        gc.collect()
+        return {"flag": 4}
 
     # Read chain, make plots, return summaries
     chain_file = os.path.join(output_dir, "chain.fits")
@@ -446,7 +461,6 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
         posterior_p16    = np.percentile(samples_array, 16, axis=0)
         posterior_p84    = np.percentile(samples_array, 84, axis=0)
 
-        # Clean up XSPEC state and force garbage collection
         AllData.clear()
         AllModels.clear()
         plt.close('all')
@@ -463,7 +477,6 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
 
     else:
         logger.error(f'   Chain file {chain_file} not found after BXA run ')
-        # Clean up even on failure
         AllData.clear()
         AllModels.clear()
         plt.close('all')
