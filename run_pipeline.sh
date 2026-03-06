@@ -248,7 +248,7 @@ SKIP_FLAG=""
 if [ "${DO_RESUME}" = true ]; then
     SKIP_FLAG="--skip_completed"
     echo ""
-    echo " RESUME MODE: will skip sources with existing chain.fits"
+    echo " RESUME MODE: will skip sources already in fit_results*.fits"
 fi
 
 CLEANUP_FLAG=""

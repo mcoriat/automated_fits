@@ -49,6 +49,36 @@ def _get_open_fds():
         return set()
 
 
+# Extensions / prefixes of fds that must NOT be closed by the
+# fd fence — they are long-lived library caches, not leaks.
+_FD_KEEP_SUFFIXES = (
+    '.ttf', '.otf', '.woff',   # matplotlib font cache
+    '.so', '.dylib',            # shared libraries
+    '.pyc', '.pyo',             # compiled Python
+)
+_FD_KEEP_PREFIXES = (
+    '/dev/', '/proc/', '/sys/', # OS virtual filesystems
+    'pipe:', 'socket:', 'anon_inode:',  # non-file fds
+)
+
+
+def _is_safe_to_close(fd):
+    """Check if a leaked fd can be safely closed.
+    Returns True for fit-related files (HDF5, logs, FITS),
+    False for library caches (fonts, .so) and OS resources."""
+    try:
+        target = os.readlink(f'/proc/self/fd/{fd}')
+    except OSError:
+        return False  # can't read → don't touch
+    for pfx in _FD_KEEP_PREFIXES:
+        if target.startswith(pfx):
+            return False
+    for sfx in _FD_KEEP_SUFFIXES:
+        if target.endswith(sfx):
+            return False
+    return True
+
+
 def get_model_and_priors(model_name, redshift=0.0,
                          flux_band=(0.5, 10.0),
                          prefit=True):
@@ -444,21 +474,25 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
                     ul.removeHandler(h)
                     h.close()
 
-        # 4. FD fence: force-close any file descriptors that
-        #    leaked despite the targeted cleanup above.
-        #    Only closes fds opened AFTER our snapshot — safe
-        #    for pre-existing fds (stdin/out/err, log files).
+        # 4. FD fence: force-close leaked file descriptors.
+        #    Only closes fds that are (a) new since our snapshot
+        #    and (b) safe to close (not library caches like
+        #    matplotlib fonts or shared objects).
         fds_after = _get_open_fds()
         leaked = fds_after - fds_before
         if leaked:
-            logger.warning(
-                f"   Closing {len(leaked)} leaked fds "
-                f"after BXA fit")
+            n_closed = 0
             for fd in leaked:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
+                if _is_safe_to_close(fd):
+                    try:
+                        os.close(fd)
+                        n_closed += 1
+                    except OSError:
+                        pass
+            if n_closed:
+                logger.warning(
+                    f"   Closed {n_closed} leaked fds "
+                    f"(of {len(leaked)} new)")
 
     # If solver.run() failed, clean up XSPEC and return
     if bxa_failed:
