@@ -50,11 +50,10 @@ if [ -d "${LOG_DIR}" ]; then
     N_ERRORS=$(grep -rch "ERROR" "${LOG_DIR}"/ 2>/dev/null | awk '{s+=$1}END{print s+0}')
 fi
 
-# Also count chain.fits on disk (in case logs were lost)
-N_CHAINS=$(find "${OUTPUT_DIR}" -name "chain.fits" -type f 2>/dev/null | wc -l | tr -d ' ')
-if [ "${N_CHAINS}" -gt "${N_SUCCESS}" ]; then
-    N_SUCCESS=${N_CHAINS}
-fi
+# Note: previously counted chain.fits on disk via find, but that
+# is extremely slow on NFS (20+ min with thousands of dirs).
+# Log-based counts are the authoritative source, especially
+# since --cleanup_chains deletes chain files after each fit.
 
 # Total touched = processed + skipped
 N_TOUCHED=$((N_PROCESSED + N_SKIPPED))
@@ -114,9 +113,11 @@ fi
 N_RUNNING=$(pgrep -f "automated_fits.py" 2>/dev/null | wc -l | tr -d ' ')
 echo " Running processes: ${N_RUNNING}"
 
-# Disk usage
-DISK_USAGE=$(du -sh "${OUTPUT_DIR}" 2>/dev/null | cut -f1)
-echo " Disk usage: ${DISK_USAGE}"
+# Disk usage — use df on the mount point (instant) instead of
+# du -sh (walks entire tree, 30+ min on NFS)
+MOUNT_POINT=$(df "${OUTPUT_DIR}" 2>/dev/null | tail -1 | awk '{print $NF}')
+DISK_USAGE=$(df -h "${OUTPUT_DIR}" 2>/dev/null | tail -1 | awk '{printf "%s used / %s total (%s)", $3, $2, $5}')
+echo " Disk usage: ${DISK_USAGE} (on ${MOUNT_POINT})"
 
 # Estimate completion (only if enough data)
 if [ "${N_TOUCHED}" -gt 0 ] && [ "${TOTAL}" != "?" ]; then
