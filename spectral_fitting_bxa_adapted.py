@@ -753,6 +753,6 @@ def _write_rows_to_fits(rows, fits_path):
     # Atomic write: write to a temp file first, then rename.
     # If the write crashes, the original file is untouched.
     tmp_path = fits_path + ".tmp"
-    table.write(tmp_path, overwrite=True)
+    table.write(tmp_path, format='fits', overwrite=True)
     os.replace(tmp_path, fits_path)
 
