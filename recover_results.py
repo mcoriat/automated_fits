@@ -39,22 +39,101 @@ PARAM_RE = re.compile(
     r"([^\s]+)\s+\[([^\s,]+),([^\s\]]+)\]"
 )
 
+# Pre-fit chi2/dof:  "   Pre-fit completed: chi2/dof = 245.6/253"
+PREFIT_RE = re.compile(
+    r"Pre-fit completed:\s+chi2/dof\s*=\s*([0-9.eE+-]+)/(\d+)")
+
+# logZ:  "  logZ = -128.6 +- 0.1658"
+LOGZ_RE = re.compile(
+    r"logZ\s*=\s*([0-9.eE+-]+)\s*\+-\s*([0-9.eE+-]+)")
+
+# Background p-value:  "   Background check: p=0.4316 → OK for ..."
+BKG_PVAL_RE = re.compile(
+    r"Background check:\s+p=([0-9.eE+-]+)")
+
+# Goodness-of-fit (new pipeline):
+#   "   Goodness-of-fit: cstat/dof = 128.3/253, KS p-value = 0.4321"
+GOF_RE = re.compile(
+    r"Goodness-of-fit:\s+cstat/dof\s*=\s*"
+    r"([0-9.eE+-]+)/([0-9-]+),\s*"
+    r"KS p-value\s*=\s*([0-9.eE+-]+)")
+
+# BXA timeout/failure
+BXA_TIMEOUT_RE = re.compile(r"BXA fit timed out")
+BXA_FAIL_RE = re.compile(r"BXA solver failed")
+
 
 def parse_log_file(log_path):
     """Parse a per-source log file and extract fit results.
 
-    Returns a dict of {param_name: (median, p16, p84)} if the fit
-    succeeded, or None if no successful fit was found.
+    Returns a dict with:
+      - "params": OrderedDict {name: (median, p16, p84)} or None
+      - "prefit_chi2": float or NaN
+      - "prefit_dof": int or -1
+      - "prefit_pvalue": float or NaN  (from chi2/dof via scipy)
+      - "logZ": float or NaN
+      - "logZ_err": float or NaN
+      - "bkg_pvalue": float or NaN
+      - "flag": int  (0=OK, see flag definitions)
+    Returns None only if the log file cannot be read at all.
     """
     params = OrderedDict()
     found_success = False
+    prefit_chi2 = np.nan
+    prefit_dof = -1
+    logZ = np.nan
+    logZ_err = np.nan
+    bkg_pvalue = np.nan
+    gof_cstat = np.nan
+    gof_dof = -1
+    gof_ks_pvalue = np.nan
+    bxa_timed_out = False
+    bxa_failed = False
 
     try:
         with open(log_path, "r", errors="replace") as f:
             for line in f:
+                # --- Pre-fit chi2/dof ---
+                m = PREFIT_RE.search(line)
+                if m:
+                    prefit_chi2 = float(m.group(1))
+                    prefit_dof = int(m.group(2))
+                    continue
+
+                # --- logZ (take the first occurrence) ---
+                if np.isnan(logZ):
+                    m = LOGZ_RE.search(line)
+                    if m:
+                        logZ = float(m.group(1))
+                        logZ_err = float(m.group(2))
+                        continue
+
+                # --- Background p-value ---
+                m = BKG_PVAL_RE.search(line)
+                if m:
+                    bkg_pvalue = float(m.group(1))
+                    continue
+
+                # --- BXA timeout/failure ---
+                if BXA_TIMEOUT_RE.search(line):
+                    bxa_timed_out = True
+                    continue
+                if BXA_FAIL_RE.search(line):
+                    bxa_failed = True
+                    continue
+
+                # --- Goodness-of-fit (new pipeline) ---
+                m = GOF_RE.search(line)
+                if m:
+                    gof_cstat = float(m.group(1))
+                    gof_dof = int(m.group(2))
+                    gof_ks_pvalue = float(m.group(3))
+                    continue
+
+                # --- Fit completed + parameter block ---
                 if "Fit completed successfully" in line:
                     found_success = True
-                    params.clear()  # reset in case of multiple fits
+                    params.clear()
                     continue
 
                 if found_success:
@@ -65,15 +144,69 @@ def parse_log_file(log_path):
                         p16 = float(m.group(3))
                         p84 = float(m.group(4))
                         params[name] = (median, p16, p84)
-                    elif line.strip() and not line.strip().startswith("Cleaned up"):
-                        # End of parameter block
+                    elif line.strip() and not line.strip().startswith(
+                            "Cleaned up"):
                         found_success = False
+
     except Exception as e:
         print(f"  WARNING: Could not read {log_path}: {e}",
               file=sys.stderr)
         return None
 
-    return params if params else None
+    if not params:
+        return None
+
+    # Compute pre-fit p-value from chi2/dof
+    prefit_pvalue = np.nan
+    if np.isfinite(prefit_chi2) and prefit_dof > 0:
+        try:
+            from scipy.stats import chi2 as chi2_dist
+            prefit_pvalue = 1.0 - chi2_dist.cdf(
+                prefit_chi2, prefit_dof)
+        except Exception:
+            pass
+
+    # --- Flag logic ---
+    # 0 = no issues
+    # 1 = poor goodness-of-fit: KS p-value < 0.01 if available,
+    #     otherwise pre-fit p-value < 0.01
+    # 2 = PhoIndex pegged at prior boundary
+    #     (median within 0.05 of hard limits 1.0 or 3.0)
+    # 4 = nH pegged at upper prior boundary
+    #     (median > 9.5, i.e. near the 10.0 cap)
+    # Flags are combined as a bitmask.
+    flag = 0
+
+    # Prefer KS p-value (proper GoF) over pre-fit p-value
+    if np.isfinite(gof_ks_pvalue):
+        if gof_ks_pvalue < 0.01:
+            flag |= 1
+    elif np.isfinite(prefit_pvalue) and prefit_pvalue < 0.01:
+        flag |= 1
+
+    if "PhoIndex" in params:
+        ph_med = params["PhoIndex"][0]
+        if ph_med <= 1.05 or ph_med >= 2.95:
+            flag |= 2
+
+    if "nH" in params:
+        nh_med = params["nH"][0]
+        if nh_med >= 9.5:
+            flag |= 4
+
+    return {
+        "params": params,
+        "prefit_chi2": prefit_chi2,
+        "prefit_dof": prefit_dof,
+        "prefit_pvalue": prefit_pvalue,
+        "logZ": logZ,
+        "logZ_err": logZ_err,
+        "bkg_pvalue": bkg_pvalue,
+        "cstat": gof_cstat,
+        "cstat_dof": gof_dof,
+        "ks_pvalue": gof_ks_pvalue,
+        "flag": flag,
+    }
 
 
 def _parse_one_source(args_tuple):
@@ -88,15 +221,26 @@ def _parse_one_source(args_tuple):
     if not os.path.exists(log_path):
         return (srcid_str, "no_log", None)
 
-    params = parse_log_file(log_path)
-    if params is None:
+    result = parse_log_file(log_path)
+    if result is None:
         return (srcid_str, "no_fit", None)
 
     row = {"SRCID": int(srcid_str)}
-    for pname, (median, p16, p84) in params.items():
+    for pname, (median, p16, p84) in result["params"].items():
         row[f"{pname}_median"] = median
         row[f"{pname}_p16"] = p16
         row[f"{pname}_p84"] = p84
+
+    row["prefit_chi2"] = result["prefit_chi2"]
+    row["prefit_dof"] = result["prefit_dof"]
+    row["prefit_pvalue"] = result["prefit_pvalue"]
+    row["logZ"] = result["logZ"]
+    row["logZ_err"] = result["logZ_err"]
+    row["bkg_pvalue"] = result["bkg_pvalue"]
+    row["cstat"] = result["cstat"]
+    row["cstat_dof"] = result["cstat_dof"]
+    row["ks_pvalue"] = result["ks_pvalue"]
+    row["flag"] = result["flag"]
 
     return (srcid_str, "ok", row)
 
@@ -206,12 +350,19 @@ def main():
         for k in row:
             all_cols[k] = True
 
+    # Integer columns (use specific defaults, not NaN)
+    INT_COLS = {"SRCID": (np.int64, 0),
+                "prefit_dof": (np.int32, -1),
+                "cstat_dof": (np.int32, -1),
+                "flag": (np.int16, -1)}
+
     # Build column arrays
     col_data = {}
     for col in all_cols:
-        if col == "SRCID":
+        if col in INT_COLS:
+            dtype, default = INT_COLS[col]
             col_data[col] = np.array(
-                [r.get(col, 0) for r in rows], dtype=np.int64)
+                [r.get(col, default) for r in rows], dtype=dtype)
         else:
             col_data[col] = np.array(
                 [r.get(col, np.nan) for r in rows], dtype=np.float64)
@@ -224,6 +375,18 @@ def main():
     print(f"  Written: {fits_path}")
     print(f"  Rows:    {len(table)}")
     print(f"  Columns: {table.colnames}")
+
+    # Flag summary
+    flags = table["flag"]
+    print(f"\n  Flag summary (bitmask):")
+    print(f"    flag=0 (clean):          "
+          f"{np.sum(flags == 0)}")
+    print(f"    bit 1 (prefit p<0.01):   "
+          f"{np.sum((flags & 1) > 0)}")
+    print(f"    bit 2 (PhoIndex pegged): "
+          f"{np.sum((flags & 2) > 0)}")
+    print(f"    bit 4 (nH pegged):       "
+          f"{np.sum((flags & 4) > 0)}")
 
 
 if __name__ == "__main__":

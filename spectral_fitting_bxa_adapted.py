@@ -354,6 +354,112 @@ def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
 
 
 
+def _compute_goodness_of_fit(labels, posterior_median,
+                             samples_array, logger):
+    """Compute goodness-of-fit statistics while XSPEC is loaded.
+
+    Called after BXA has finished but BEFORE AllData.clear().
+    Sets model params to posterior medians, then computes:
+      - C-stat and dof from XSPEC
+      - KS statistic and bootstrap p-value (data vs model counts)
+
+    Returns a dict with keys: cstat, dof, ks_stat, ks_pvalue.
+    """
+    gof = {"cstat": np.nan, "dof": -1,
+           "ks_stat": np.nan, "ks_pvalue": np.nan}
+
+    try:
+        # Set model parameters to posterior medians
+        m = AllModels(1)
+        for name, value in zip(labels, posterior_median):
+            # BXA labels are like "nH", "PhoIndex", "lg10Flux"
+            # XSPEC parameter access via model component attributes
+            for ci in range(1, m.nParameters + 1):
+                p = m(ci)
+                if p.name == name:
+                    if not p.frozen:
+                        p.values = [float(value)]
+                    break
+
+        # C-stat and dof
+        Fit.perform()  # re-evaluate statistic at posterior medians
+        gof["cstat"] = float(Fit.statistic)
+        gof["dof"] = int(Fit.dof)
+
+        # Get observed and model-predicted counts per channel
+        # across all loaded spectra (for KS test)
+        data_all = []
+        model_all = []
+        for si in range(1, AllData.nSpectra + 1):
+            Plot.device = "/null"
+            Plot.xAxis = "channel"
+            Plot("counts")
+            # Plot.y(si) = observed counts,
+            # Plot.model(si) = folded model counts
+            obs = np.array(Plot.y(si))
+            mod = np.array(Plot.model(si))
+            data_all.append(obs)
+            model_all.append(mod)
+
+        data_total = np.concatenate(data_all)
+        model_total = np.concatenate(model_all)
+
+        # Remove channels with zero model prediction
+        # (ignored channels or zero-exposure bins)
+        mask = model_total > 0
+        data_total = data_total[mask]
+        model_total = model_total[mask]
+
+        if len(data_total) > 0:
+            ks, ks_pval = _ks_bootstrap(data_total, model_total)
+            gof["ks_stat"] = float(ks)
+            gof["ks_pvalue"] = float(ks_pval)
+
+        logger.info(
+            f"   Goodness-of-fit: cstat/dof = "
+            f"{gof['cstat']:.1f}/{gof['dof']}, "
+            f"KS p-value = {gof['ks_pvalue']:.4f}")
+
+    except Exception as e:
+        logger.warning(
+            f"   Could not compute goodness-of-fit: {e}")
+
+    return gof
+
+
+def _ks_2samp(sample1, sample2):
+    """KS statistic between two count arrays (CDF comparison)."""
+    cdf1 = sample1.cumsum() / sample1.sum()
+    cdf2 = sample2.cumsum() / sample2.sum()
+    return np.abs(cdf1 - cdf2).max()
+
+
+def _ks_bootstrap(data, model, niter=1000):
+    """KS test with permutation-based p-value.
+
+    Standard KS p-values are invalid when the model was fitted
+    to the data. Bootstrap permutation corrects for this by
+    estimating the null distribution of the KS statistic under
+    random relabelling of data/model counts.
+
+    See Babu & Rao (2004) and
+    https://asaip.psu.edu/Articles/beware-the-kolmogorov-smirnov-test
+    """
+    ks_obs = _ks_2samp(data, model)
+
+    rng = np.random.default_rng()
+    count = 0
+    for _ in range(niter):
+        # Fixed-label permutation (swap data↔model per bin)
+        mask = rng.choice([False, True], size=len(data))
+        perm1 = np.where(mask, data, model)
+        perm2 = np.where(mask, model, data)
+        if _ks_2samp(perm1, perm2) >= ks_obs:
+            count += 1
+
+    return ks_obs, count / niter
+
+
 def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
                      redshift=0.0, model_name="powerlaw",
                      output_base="bxa_fit_results", srcid="unknown", log_file="fit_spectrum_bxa.log"):
@@ -524,12 +630,19 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
         posterior_p16    = np.percentile(samples_array, 16, axis=0)
         posterior_p84    = np.percentile(samples_array, 84, axis=0)
 
+        # ----- Goodness-of-fit statistics -----
+        # Compute while XSPEC model + data are still loaded.
+        # Set model parameters to posterior medians so the
+        # folded model reflects the Bayesian best estimate.
+        gof = _compute_goodness_of_fit(
+            labels, posterior_median, samples_array, logger)
+
         AllData.clear()
         AllModels.clear()
         plt.close('all')
         gc.collect()
 
-        return {
+        result = {
             "parameter_names": labels,
             "posterior_median": posterior_median,
             "posterior_p16": posterior_p16,
@@ -537,6 +650,8 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
             "output_dir": output_dir,
             "flag": 0
         }
+        result.update(gof)
+        return result
 
     else:
         logger.error(f'   Chain file {chain_file} not found after BXA run ')
@@ -692,6 +807,13 @@ def export_bxa_results_to_fits_bulk(
             row[f"{pname}_median"] = float(med)
             row[f"{pname}_p16"] = float(lo)
             row[f"{pname}_p84"] = float(hi)
+
+        # Goodness-of-fit columns (present if pipeline
+        # version includes _compute_goodness_of_fit)
+        for gof_key in ("cstat", "dof", "ks_stat",
+                         "ks_pvalue"):
+            if gof_key in results:
+                row[gof_key] = results[gof_key]
 
         # Fill missing columns with NaN
         for col in all_columns:
