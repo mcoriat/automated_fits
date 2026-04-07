@@ -22,6 +22,7 @@ This will:
 """
 
 import argparse
+import multiprocessing as mp
 import os
 import re
 import sys
@@ -75,6 +76,31 @@ def parse_log_file(log_path):
     return params if params else None
 
 
+def _parse_one_source(args_tuple):
+    """Worker function for multiprocessing.
+
+    Takes (srcid_str, log_path) and returns
+    (srcid_str, "ok", row_dict) or (srcid_str, "no_log"|"no_fit", None).
+    Must be a top-level function for pickling.
+    """
+    srcid_str, log_path = args_tuple
+
+    if not os.path.exists(log_path):
+        return (srcid_str, "no_log", None)
+
+    params = parse_log_file(log_path)
+    if params is None:
+        return (srcid_str, "no_fit", None)
+
+    row = {"SRCID": int(srcid_str)}
+    for pname, (median, p16, p84) in params.items():
+        row[f"{pname}_median"] = median
+        row[f"{pname}_p16"] = p16
+        row[f"{pname}_p84"] = p84
+
+    return (srcid_str, "ok", row)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Recover BXA fit results from per-source log files")
@@ -87,6 +113,9 @@ def main():
     parser.add_argument(
         "--output", default="fit_results_all.fits",
         help="Output FITS filename (default: fit_results_all.fits)")
+    parser.add_argument(
+        "--nworkers", type=int, default=0,
+        help="Number of parallel workers (default: all CPUs)")
     parser.add_argument(
         "--dry_run", action="store_true",
         help="Just count recoverable sources, don't write FITS")
@@ -111,47 +140,46 @@ def main():
     print(f"  Found {len(srcid_dirs)} source directories "
           f"({time.time() - t0:.1f}s)")
 
-    # Parse log files
+    # Parse log files in parallel
     rows = []
     n_no_log = 0
     n_no_fit = 0
     n_recovered = 0
 
-    print(f"Parsing log files...")
+    nworkers = args.nworkers if args.nworkers > 0 else mp.cpu_count()
+    print(f"Parsing log files with {nworkers} workers...")
     t1 = time.time()
 
-    for i, srcid_str in enumerate(srcid_dirs):
-        if (i + 1) % 10000 == 0:
-            elapsed = time.time() - t1
-            rate = (i + 1) / elapsed
-            eta = (len(srcid_dirs) - i - 1) / rate
-            print(f"  [{i+1}/{len(srcid_dirs)}] "
-                  f"{n_recovered} recovered, "
-                  f"{n_no_fit} no fit, "
-                  f"{n_no_log} no log  "
-                  f"({rate:.0f} src/s, ETA {eta:.0f}s)")
+    # Build work items: (srcid_str, log_path) tuples
+    work_items = [
+        (s, os.path.join(output_dir, s, f"{s}{log_suffix}"))
+        for s in srcid_dirs
+    ]
 
-        srcid = int(srcid_str)
-        log_path = os.path.join(
-            output_dir, srcid_str, f"{srcid_str}{log_suffix}")
+    n_total = len(work_items)
+    n_done = 0
 
-        if not os.path.exists(log_path):
-            n_no_log += 1
-            continue
+    with mp.Pool(nworkers) as pool:
+        for srcid_str, status, row in pool.imap_unordered(
+                _parse_one_source, work_items, chunksize=500):
+            n_done += 1
+            if status == "ok":
+                rows.append(row)
+                n_recovered += 1
+            elif status == "no_log":
+                n_no_log += 1
+            else:
+                n_no_fit += 1
 
-        params = parse_log_file(log_path)
-        if params is None:
-            n_no_fit += 1
-            continue
-
-        row = {"SRCID": srcid}
-        for pname, (median, p16, p84) in params.items():
-            row[f"{pname}_median"] = median
-            row[f"{pname}_p16"] = p16
-            row[f"{pname}_p84"] = p84
-
-        rows.append(row)
-        n_recovered += 1
+            if n_done % 50000 == 0:
+                elapsed = time.time() - t1
+                rate = n_done / elapsed
+                eta = (n_total - n_done) / rate
+                print(f"  [{n_done}/{n_total}] "
+                      f"{n_recovered} recovered, "
+                      f"{n_no_fit} no fit, "
+                      f"{n_no_log} no log  "
+                      f"({rate:.0f} src/s, ETA {eta:.0f}s)")
 
     elapsed = time.time() - t1
     print(f"\nDone parsing ({elapsed:.1f}s)")
