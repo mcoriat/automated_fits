@@ -104,7 +104,7 @@ echo ""
 # Print per-chunk status (already collected above)
 if [ -n "${CHUNK_LINES}" ]; then
     echo " Per-chunk status:"
-    echo " ─────────────────────────────────────────"
+    echo " -----------------------------------------"
     printf "%b" "${CHUNK_LINES}"
     echo ""
 fi
@@ -116,7 +116,11 @@ echo " Running processes: ${N_RUNNING}"
 # Check for result FITS files already written
 N_RESULT_FILES=$(ls "${OUTPUT_DIR}"/fit_results_chunk_*.fits 2>/dev/null | wc -l | tr -d ' ')
 if [ "${N_RESULT_FILES}" -gt 0 ]; then
-    TOTAL_ROWS=$(python3 -c "
+    # Use the pipeline's venv if available (needed for astropy)
+    VENV_PYTHON="${OUTPUT_DIR}/../../XMM/5XMM/automated_fits/.venv/bin/python3"
+    [ -x "${VENV_PYTHON}" ] || VENV_PYTHON="/home/mcoriat/XMM/5XMM/automated_fits/.venv/bin/python3"
+    [ -x "${VENV_PYTHON}" ] || VENV_PYTHON="python3"
+    TOTAL_ROWS=$("${VENV_PYTHON}" -c "
 from astropy.table import Table
 import os, sys
 total = 0
