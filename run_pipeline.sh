@@ -1,13 +1,13 @@
 #!/bin/bash
 # ==============================================================
 #  run_pipeline.sh — Launch the automated spectral fitting
-#  pipeline on bell in parallel across multiple cores.
+#  pipeline in parallel across multiple cores.
 #
 #  Usage:
 #    # Test run (10 sources, 2 workers):
 #    bash run_pipeline.sh --test
 #
-#    # Full run (all sources, 30 workers):
+#    # Full run (all sources, 60 workers):
 #    bash run_pipeline.sh
 #
 #    # Restart after interruption (skips completed sources):
@@ -30,15 +30,15 @@ ulimit -n 16384 2>/dev/null || ulimit -n 4096 2>/dev/null || true
 # ==============================================================
 # CONFIGURATION — edit these paths for your setup
 # ==============================================================
-REPO_DIR="/home/mcoriat/Work/XMM/5XMM/automated_fits"
-DATA_DIR="/mnt/xmmcat/5XMM_data/Spectra"
-RESPONSES_DIR="/home/mcoriat/Work/XMM/5XMM/RESPONSES"
+REPO_DIR="/home/mcoriat/XMM/5XMM/automated_fits"
+DATA_DIR="/storage/xmmcat/5XMM_data/Spectra"
+RESPONSES_DIR="/home/mcoriat/XMM/RESPONSES"
 CATALOG="${REPO_DIR}/5xmm_matched_for_pipeline.fits"
-OUTPUT_DIR="/mnt/sas/pipeline_output"
+OUTPUT_DIR="/data/scratch/pipeline_output"
 SRCID_FILE="${REPO_DIR}/srcids.txt"
 
 # Default parallel settings
-NWORKERS=30          # Number of parallel batch jobs (keep ~10 cores free)
+NWORKERS=60          # Number of parallel batch jobs (Lovelace: 128 threads, keep headroom)
 MODEL="powerlaw"     # Spectral model: powerlaw, apec_single, blackbody, bremss
 SUBDIR="product"     # Subdirectory under OBS_ID: 'product' (5XMM) or 'pps' (4XMM)
 TEST_NSOURCES=10     # Number of sources for test run
@@ -113,42 +113,63 @@ echo ""
 
 # Initialize HEASOFT (required for PyXSPEC)
 if [ -z "${HEADAS:-}" ]; then
-    export HEADAS=/home/mcoriat/Software/heasoft-6.35.2/x86_64-pc-linux-gnu-libc2.31
-    if [ -f "${HEADAS}/headas-init.sh" ]; then
+    # Auto-detect HEASOFT installation
+    HEASOFT_BASE="/home/mcoriat/Software"
+    HEADAS_FOUND=""
+    for d in "${HEASOFT_BASE}"/heasoft-*/x86_64-*; do
+        if [ -f "${d}/headas-init.sh" ]; then
+            HEADAS_FOUND="${d}"
+        fi
+    done
+
+    if [ -n "${HEADAS_FOUND}" ]; then
+        export HEADAS="${HEADAS_FOUND}"
         echo " Initializing HEASOFT..."
+        echo "   ${HEADAS}"
         source "${HEADAS}/headas-init.sh"
     else
-        echo " ERROR: HEADAS init script not found at:"
-        echo "        ${HEADAS}/headas-init.sh"
+        echo " ERROR: No HEASOFT installation found under ${HEASOFT_BASE}/"
+        echo "        Expected: ${HEASOFT_BASE}/heasoft-*/x86_64-*/headas-init.sh"
         exit 1
     fi
 else
     echo " HEASOFT already loaded: ${HEADAS}"
 fi
 
-# Initialize SAS (may be needed for shared libraries).
-# The SAS setup script uses variables that may be unbound,
-# so we temporarily relax strict mode.
+# Activate Python venv (contains bxa, ultranest, astropy, etc.)
+# Must be activated AFTER HEASOFT so that PYTHONPATH from
+# headas-init.sh is preserved inside the venv.
+VENV_DIR="${REPO_DIR}/.venv"
+if [ -f "${VENV_DIR}/bin/activate" ]; then
+    echo " Activating Python venv: ${VENV_DIR}"
+    source "${VENV_DIR}/bin/activate"
+else
+    echo " WARNING: No venv found at ${VENV_DIR}"
+    echo "          Assuming system Python has all dependencies."
+fi
+
+# Initialize SAS if available (not required for BXA fits, but
+# some shared libraries may depend on it).
 if [ -z "${SAS_DIR:-}" ]; then
-    export SAS_DIR=/home/filippos/SASscreeningDR11/
-    export SAS_CCFPATH=/home/filippos/sasbuild/ccf/pub
-    export SAS_PATH="${SAS_DIR}"
-    if [ -f "${SAS_DIR}/sas-setup.sh" ]; then
-        echo " Initializing SAS..."
-        set +eu
-        source "${SAS_DIR}/sas-setup.sh" 2>/dev/null
-        set -eu
-        echo " SAS initialized (or skipped gracefully)."
-    else
-        echo " WARNING: SAS setup not found at ${SAS_DIR}/sas-setup.sh"
-        echo "          Continuing without SAS (not needed for BXA fits)."
+    # Try common SAS locations — skip silently if not installed
+    for sas_candidate in \
+        /home/mcoriat/Software/sas/sas-setup.sh \
+        /opt/sas/sas-setup.sh; do
+        if [ -f "${sas_candidate}" ]; then
+            export SAS_DIR="$(dirname "${sas_candidate}")"
+            echo " Initializing SAS: ${SAS_DIR}"
+            set +eu
+            source "${sas_candidate}" 2>/dev/null
+            set -eu
+            break
+        fi
+    done
+    if [ -z "${SAS_DIR:-}" ]; then
+        echo " SAS not found (not required for BXA fits)."
     fi
 else
     echo " SAS already loaded: ${SAS_DIR}"
 fi
-
-# Extra library path (Qt libs needed by some HEASOFT/SAS components)
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:/sasbuild/local/sasbld03n/GNU_CC_CXX_9.2.0/qt-x11-free/lib/"
 
 # Verify critical dependencies
 echo ""
@@ -158,7 +179,8 @@ python3 -c "import xspec; print(f'   XSPEC: {xspec.__file__}')" 2>/dev/null || {
     exit 1
 }
 python3 -c "import bxa; print(f'   BXA:   {bxa.__file__}')" 2>/dev/null || {
-    echo "   ERROR: Cannot import bxa. Install with: pip install bxa"
+    echo "   ERROR: Cannot import bxa. Is the venv activated?"
+    echo "          Expected venv at: ${VENV_DIR}"
     exit 1
 }
 python3 -c "import ultranest; print(f'   UltraNest: {ultranest.__file__}')" 2>/dev/null || {
@@ -324,25 +346,40 @@ echo ""
 # WAIT FOR ALL JOBS TO COMPLETE
 # ==============================================================
 echo " Waiting for all jobs to complete..."
-echo " (This may take hours/days. Safe to Ctrl+C — jobs"
-echo "  continue in background. Rerun with --resume to track.)"
+echo " (This may take hours/days. If you Ctrl+C or disconnect,"
+echo "  the workers continue in background but the merge step"
+echo "  below will NOT run. Use recover_results.py to merge later,"
+echo "  or relaunch with --resume to re-attach.)"
 echo ""
+
+# Trap SIGINT/SIGTERM: skip wait loop but still run the merge
+# on whatever partial results exist.
+INTERRUPTED=false
+trap 'echo ""; echo " Interrupted — skipping to merge step..."; INTERRUPTED=true' INT TERM
 
 N_DONE=0
 N_FAILED=0
-for i in "${!PIDS[@]}"; do
-    pid=${PIDS[$i]}
-    chunk_file=$(ls "${CHUNK_DIR}"/chunk_*.txt | sed -n "$((i+1))p")
-    chunk_name=$(basename "${chunk_file}" .txt)
+if [ "${INTERRUPTED}" = false ]; then
+    for i in "${!PIDS[@]}"; do
+        pid=${PIDS[$i]}
+        chunk_file=$(ls "${CHUNK_DIR}"/chunk_*.txt | sed -n "$((i+1))p")
+        chunk_name=$(basename "${chunk_file}" .txt)
 
-    if wait "${pid}"; then
-        N_DONE=$((N_DONE + 1))
-        echo "   ${chunk_name} finished OK (${N_DONE}/${NCHUNKS})"
-    else
-        N_FAILED=$((N_FAILED + 1))
-        echo "   ${chunk_name} FAILED (check ${LOG_DIR}/${chunk_name}.log)"
-    fi
-done
+        if wait "${pid}" 2>/dev/null; then
+            N_DONE=$((N_DONE + 1))
+            echo "   ${chunk_name} finished OK (${N_DONE}/${NCHUNKS})"
+        else
+            if [ "${INTERRUPTED}" = true ]; then
+                break
+            fi
+            N_FAILED=$((N_FAILED + 1))
+            echo "   ${chunk_name} FAILED (check ${LOG_DIR}/${chunk_name}.log)"
+        fi
+    done
+fi
+
+# Reset trap
+trap - INT TERM
 
 END_TIME=$(date +%s)
 ELAPSED=$(( END_TIME - START_TIME ))
@@ -351,9 +388,14 @@ MINS=$(( (ELAPSED % 3600) / 60 ))
 
 echo ""
 echo "=============================================="
-echo " Pipeline complete!"
-echo " Time: ${HOURS}h ${MINS}m"
-echo " Chunks OK: ${N_DONE}  |  Failed: ${N_FAILED}"
+if [ "${INTERRUPTED}" = true ]; then
+    echo " Pipeline interrupted after ${HOURS}h ${MINS}m"
+    echo " Workers still running in background."
+else
+    echo " Pipeline complete!"
+    echo " Time: ${HOURS}h ${MINS}m"
+    echo " Chunks OK: ${N_DONE}  |  Failed: ${N_FAILED}"
+fi
 echo "=============================================="
 
 # ==============================================================
@@ -377,6 +419,8 @@ result_files = sorted([
 
 if not result_files:
     print("   No result files found to merge.")
+    print("   If workers are still running, wait for them to finish")
+    print("   then run: python3 recover_results.py " + output_dir)
     sys.exit(0)
 
 print(f"   Found {len(result_files)} result files")
@@ -393,8 +437,8 @@ for rf in result_files:
 if tables:
     merged = vstack(tables)
     merged_path = os.path.join(output_dir, "fit_results_all.fits")
-    merged.write(merged_path, overwrite=True)
-    print(f"\n   Merged {len(merged)} results → {merged_path}")
+    merged.write(merged_path, format='fits', overwrite=True)
+    print(f"\n   Merged {len(merged)} results -> {merged_path}")
 else:
     print("   No valid result tables to merge.")
 MERGE_SCRIPT
