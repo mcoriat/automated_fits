@@ -33,9 +33,10 @@ ulimit -n 16384 2>/dev/null || ulimit -n 4096 2>/dev/null || true
 REPO_DIR="/home/mcoriat/XMM/5XMM/automated_fits"
 DATA_DIR="/storage/xmmcat/5XMM_data/Spectra"
 RESPONSES_DIR="/home/mcoriat/XMM/RESPONSES"
-CATALOG="${REPO_DIR}/5xmm_matched_for_pipeline.fits"
+ENTRY_DIR="/home/mcoriat/XMM/5XMM/entry_products"
+CATALOG="${ENTRY_DIR}/5xmm_pps_matched_for_spec_pipe.fits"
 OUTPUT_DIR="/data/scratch/pipeline_output"
-SRCID_FILE="${REPO_DIR}/srcids.txt"
+SRCID_FILE="${ENTRY_DIR}/srcids_for_spec_pipe.txt"
 
 # Default parallel settings
 NWORKERS=60          # Number of parallel batch jobs (Lovelace: 128 threads, keep headroom)
