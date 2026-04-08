@@ -12,7 +12,7 @@
 #
 # ==============================================================
 
-OUTPUT_DIR="${1:-/mnt/xmmcat/5XMM_data/Automated_Fits_Results}"
+OUTPUT_DIR="${1:-/data/scratch/pipeline_output}"
 
 if [ ! -d "${OUTPUT_DIR}" ]; then
     echo "ERROR: Output directory not found: ${OUTPUT_DIR}"
@@ -37,23 +37,52 @@ fi
 # Log directory
 LOG_DIR="${OUTPUT_DIR}/chunk_logs"
 
-# ---------- Counts from logs (reliable, works with --cleanup_chains) ----------
+# ---------- Per-chunk + aggregate counts ----------
+# Count from each chunk log individually and sum.
+# This does a single grep pass per log (3 patterns via -E),
+# much faster than 4 separate grep -rch on the entire log dir.
 N_PROCESSED=0
 N_SKIPPED=0
 N_SUCCESS=0
-N_ERRORS=0
+
+CHUNK_LINES=""
 
 if [ -d "${LOG_DIR}" ]; then
-    N_PROCESSED=$(grep -rch "Processing SRCID" "${LOG_DIR}"/ 2>/dev/null | awk '{s+=$1}END{print s+0}')
-    N_SKIPPED=$(grep -rch "Skipping SRCID" "${LOG_DIR}"/ 2>/dev/null | awk '{s+=$1}END{print s+0}')
-    N_SUCCESS=$(grep -rch "Fit completed successfully" "${LOG_DIR}"/ 2>/dev/null | awk '{s+=$1}END{print s+0}')
-    N_ERRORS=$(grep -rch "ERROR" "${LOG_DIR}"/ 2>/dev/null | awk '{s+=$1}END{print s+0}')
-fi
+    for log_file in "${LOG_DIR}"/chunk_*.log; do
+        [ -f "${log_file}" ] || continue
+        chunk_name=$(basename "${log_file}" .log)
 
-# Note: previously counted chain.fits on disk via find, but that
-# is extremely slow on NFS (20+ min with thousands of dirs).
-# Log-based counts are the authoritative source, especially
-# since --cleanup_chains deletes chain files after each fit.
+        # Single grep pass: count the 3 key patterns
+        n_processed=$(grep -c "Processing SRCID" "${log_file}" 2>/dev/null || true)
+        n_skipped=$(grep -c "Skipping SRCID" "${log_file}" 2>/dev/null || true)
+        n_fits=$(grep -c "Fit completed successfully" "${log_file}" 2>/dev/null || true)
+
+        # Accumulate totals
+        N_PROCESSED=$((N_PROCESSED + n_processed))
+        N_SKIPPED=$((N_SKIPPED + n_skipped))
+        N_SUCCESS=$((N_SUCCESS + n_fits))
+
+        # Check if still running (look for "Batch processing complete")
+        if grep -q "Batch processing complete" "${log_file}" 2>/dev/null; then
+            status="DONE"
+        elif lsof "${log_file}" >/dev/null 2>&1; then
+            status="RUNNING"
+        else
+            if [ "${n_processed}" -eq 0 ] 2>/dev/null; then
+                status="PENDING"
+            else
+                status="STOPPED?"
+            fi
+        fi
+
+        # Get last SRCID being processed
+        last_srcid=$(grep "Processing SRCID" "${log_file}" 2>/dev/null | tail -1 | sed -n 's/.*SRCID \([0-9]*\).*/\1/p' || true)
+        last_srcid=${last_srcid:-—}
+
+        CHUNK_LINES="${CHUNK_LINES}$(printf "   %-12s %10s  proc: %-6s  skip: %-6s  fits: %-4s  last: %s\n" \
+            "${chunk_name}" "[${status}]" "${n_processed}" "${n_skipped}" "${n_fits}" "${last_srcid}")\n"
+    done
+fi
 
 # Total touched = processed + skipped
 N_TOUCHED=$((N_PROCESSED + N_SKIPPED))
@@ -72,46 +101,36 @@ echo "   Successful fits: ${N_SUCCESS}"
 echo "   Error rate:      ${ERROR_RATE}%"
 echo ""
 
-# Per-chunk progress from log files
-if [ -d "${LOG_DIR}" ]; then
+# Print per-chunk status (already collected above)
+if [ -n "${CHUNK_LINES}" ]; then
     echo " Per-chunk status:"
     echo " ─────────────────────────────────────────"
-    for log_file in "${LOG_DIR}"/chunk_*.log; do
-        [ -f "${log_file}" ] || continue
-        chunk_name=$(basename "${log_file}" .log)
-
-        # Count processed sources from log (|| true to avoid exit 1 from grep -c)
-        n_processed=$(grep -c "Processing SRCID" "${log_file}" 2>/dev/null || true)
-        n_skipped=$(grep -c "Skipping SRCID" "${log_file}" 2>/dev/null || true)
-        n_fits=$(grep -c "Fit completed successfully" "${log_file}" 2>/dev/null || true)
-
-        # Check if still running (look for "Batch processing complete")
-        if grep -q "Batch processing complete" "${log_file}" 2>/dev/null; then
-            status="DONE"
-        elif [ -n "$(fuser "${log_file}" 2>/dev/null)" ]; then
-            status="RUNNING"
-        else
-            # File not being written and not marked complete
-            if [ "${n_processed}" -eq 0 ] 2>/dev/null; then
-                status="PENDING"
-            else
-                status="STOPPED?"
-            fi
-        fi
-
-        # Get last SRCID being processed
-        last_srcid=$(grep "Processing SRCID" "${log_file}" 2>/dev/null | tail -1 | grep -oP 'SRCID \K[0-9]+' || true)
-        last_srcid=${last_srcid:-—}
-
-        printf "   %-12s %10s  proc: %-6s  skip: %-6s  fits: %-4s  last: %s\n" \
-            "${chunk_name}" "[${status}]" "${n_processed}" "${n_skipped}" "${n_fits}" "${last_srcid}"
-    done
+    printf "%b" "${CHUNK_LINES}"
     echo ""
 fi
 
 # Check for running Python processes
 N_RUNNING=$(pgrep -f "automated_fits.py" 2>/dev/null | wc -l | tr -d ' ')
 echo " Running processes: ${N_RUNNING}"
+
+# Check for result FITS files already written
+N_RESULT_FILES=$(ls "${OUTPUT_DIR}"/fit_results_chunk_*.fits 2>/dev/null | wc -l | tr -d ' ')
+if [ "${N_RESULT_FILES}" -gt 0 ]; then
+    TOTAL_ROWS=$(python3 -c "
+from astropy.table import Table
+import os, sys
+total = 0
+for f in sorted(os.listdir('${OUTPUT_DIR}')):
+    if f.startswith('fit_results_chunk_') and f.endswith('.fits'):
+        try:
+            total += len(Table.read(os.path.join('${OUTPUT_DIR}', f)))
+        except: pass
+print(total)
+" 2>/dev/null || echo "?")
+    echo " Result files: ${N_RESULT_FILES} chunks, ${TOTAL_ROWS} rows written"
+else
+    echo " Result files: none yet"
+fi
 
 # Disk usage — use df on the mount point (instant) instead of
 # du -sh (walks entire tree, 30+ min on NFS)
