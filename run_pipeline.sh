@@ -113,28 +113,25 @@ echo " Started: $(date)"
 echo ""
 
 # Initialize HEASOFT (required for PyXSPEC)
-if [ -z "${HEADAS:-}" ]; then
-    # Auto-detect HEASOFT installation
-    HEASOFT_BASE="/home/mcoriat/Software"
-    HEADAS_FOUND=""
-    for d in "${HEASOFT_BASE}"/heasoft-*/x86_64-*; do
-        if [ -f "${d}/headas-init.sh" ]; then
-            HEADAS_FOUND="${d}"
-        fi
-    done
-
-    if [ -n "${HEADAS_FOUND}" ]; then
-        export HEADAS="${HEADAS_FOUND}"
-        echo " Initializing HEASOFT..."
-        echo "   ${HEADAS}"
-        source "${HEADAS}/headas-init.sh"
-    else
-        echo " ERROR: No HEASOFT installation found under ${HEASOFT_BASE}/"
-        echo "        Expected: ${HEASOFT_BASE}/heasoft-*/x86_64-*/headas-init.sh"
-        exit 1
+# Always re-source headas-init.sh — HEADAS alone is not enough;
+# a session restart may leave HEADAS set but LD_LIBRARY_PATH,
+# PYTHONPATH, etc. missing.  headas-init.sh is idempotent.
+HEASOFT_BASE="/home/mcoriat/Software"
+HEADAS_FOUND=""
+for d in "${HEASOFT_BASE}"/heasoft-*/x86_64-*; do
+    if [ -f "${d}/headas-init.sh" ]; then
+        HEADAS_FOUND="${d}"
     fi
+done
+
+if [ -n "${HEADAS_FOUND}" ]; then
+    export HEADAS="${HEADAS_FOUND}"
+    echo " Initializing HEASOFT: ${HEADAS}"
+    source "${HEADAS}/headas-init.sh"
 else
-    echo " HEASOFT already loaded: ${HEADAS}"
+    echo " ERROR: No HEASOFT installation found under ${HEASOFT_BASE}/"
+    echo "        Expected: ${HEASOFT_BASE}/heasoft-*/x86_64-*/headas-init.sh"
+    exit 1
 fi
 
 # Activate Python venv (contains bxa, ultranest, astropy, etc.)
