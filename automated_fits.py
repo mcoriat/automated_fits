@@ -35,6 +35,8 @@ import gc
 import shutil
 import logging
 
+import numpy as np
+
 
 def _safe_print(*args, **kwargs):
     """print() wrapper that survives broken stdout (e.g. NFS glitch
@@ -129,6 +131,50 @@ def _load_completed_srcids(output_dir):
         except Exception:
             pass  # skip corrupt / incomplete files
     return completed
+
+
+def _load_previous_results(output_dir):
+    """Load existing fit results from fit_results*.fits files
+    as (srcid, results_dict) tuples suitable for accumulated_results.
+
+    Used on --resume to pre-seed accumulated_results so that the
+    final export preserves results from a previous (interrupted) run.
+    Without this, the final export overwrites the FITS file with
+    only the new results, losing the earlier ones.
+    """
+    from astropy.table import Table
+    import glob as globmod
+    previous = []
+    pattern = os.path.join(output_dir, "fit_results*.fits")
+    for fpath in sorted(globmod.glob(pattern)):
+        try:
+            t = Table.read(fpath)
+        except Exception:
+            continue
+        colnames = t.colnames
+        # Detect parameter names from *_median columns
+        param_names = [c.replace("_median", "")
+                       for c in colnames
+                       if c.endswith("_median") and c != "SRCID"]
+        for row in t:
+            srcid = int(row["SRCID"])
+            results = {
+                "parameter_names": param_names,
+                "posterior_median": np.array(
+                    [float(row[f"{p}_median"]) for p in param_names]),
+                "posterior_p16": np.array(
+                    [float(row[f"{p}_p16"]) for p in param_names]),
+                "posterior_p84": np.array(
+                    [float(row[f"{p}_p84"]) for p in param_names]),
+                "flag": 0
+            }
+            # Restore GoF columns if present
+            for key in ("cstat", "dof", "ks_stat", "ks_pvalue"):
+                if key in colnames:
+                    val = row[key]
+                    results[key] = float(val) if key != "dof" else int(val)
+            previous.append((srcid, results))
+    return previous
 
 
 def _cleanup_chain_dir(results, srcid, output_dir):
@@ -678,6 +724,8 @@ def main():
         # Pre-load completed SRCIDs from existing results
         # (works even when chain files have been cleaned up)
         completed = set()
+        accumulated_results = []
+        n_preloaded = 0
         if getattr(args, 'skip_completed', False):
             print(" Scanning existing fit_results*.fits "
                   "for completed SRCIDs...")
@@ -685,12 +733,18 @@ def main():
             if completed:
                 print(f" Found {len(completed)} already-"
                       f"completed SRCIDs")
+                # Pre-load previous results so the final export
+                # preserves them (otherwise they get overwritten)
+                accumulated_results = _load_previous_results(
+                    output_dir)
+                n_preloaded = len(accumulated_results)
+                print(f" Pre-loaded {n_preloaded} previous "
+                      f"results into accumulator")
 
         # Process each source
-        accumulated_results = []
         n_success = 0
         n_fail = 0
-        n_flushed = 0          # results already written to disk
+        n_flushed = n_preloaded  # results already written to disk
         FLUSH_EVERY = 50       # save results every N fits
 
         for i, srcid in enumerate(srcids):
@@ -787,11 +841,15 @@ def main():
                 output_base=output_dir,
                 fits_filename=args.export_filename)
 
+        total_fits = n_success + n_preloaded
         _safe_print(f"\n\n Batch processing complete: "
-                    f"{n_success} succeeded, {n_fail} failed "
-                    f"out of {n_total} total.\n")
+                    f"{n_success} new fits, {n_fail} failed "
+                    f"out of {n_total} total"
+                    f"{f' (+{n_preloaded} pre-loaded from previous run)' if n_preloaded else ''}.\n"
+                    f" Total results in FITS: {total_fits}\n")
         logger.info(
-            f"Batch complete: {n_success} succeeded, "
+            f"Batch complete: {n_success} new + "
+            f"{n_preloaded} pre-loaded = {total_fits} total, "
             f"{n_fail} failed out of {n_total}")
 
     # ============================================
