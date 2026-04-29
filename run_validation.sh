@@ -93,7 +93,9 @@ python -c "import bxa; print(f'  BXA:      {bxa.__file__}')" || {
 echo "  All OK."
 echo ""
 
-VALIDATION_DIR="validation_$(date +%Y%m%d_%H%M)"
+# All paths must be absolute — the export function joins
+# output_dir + export_filename, and relative paths double up.
+VALIDATION_DIR="$(pwd)/validation_$(date +%Y%m%d_%H%M)"
 SRCID_FILE="${VALIDATION_DIR}/validation_srcids.txt"
 META_FILE="${VALIDATION_DIR}/validation_srcids.meta.fits"
 OUTPUT_DIR="${VALIDATION_DIR}/no_prefit_run"
