@@ -38,10 +38,59 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(pwd)}"
 RESPONSES_DIR="${RESPONSES_DIR:-/home/mcoriat/XMM/RESPONSES}"
 CATALOG="${CATALOG:-/home/mcoriat/XMM/5XMM/entry_products/5xmm_pps_matched_for_spec_pipe.fits}"
 MODEL_NAME="${MODEL_NAME:-powerlaw}"
+HEASOFT_BASE="${HEASOFT_BASE:-/home/mcoriat/Software}"
 
 # -- ARGS --
 N_PER_BIN="${1:-200}"
 NWORKERS="${2:-30}"
+
+# ===========================================================
+# Initialize HEASOFT, venv, SAS (copied from run_pipeline.sh)
+# ===========================================================
+HEADAS_FOUND=""
+for d in "${HEASOFT_BASE}"/heasoft-*/x86_64-*; do
+    if [ -f "${d}/headas-init.sh" ]; then
+        HEADAS_FOUND="${d}"
+    fi
+done
+if [ -n "${HEADAS_FOUND}" ]; then
+    export HEADAS="${HEADAS_FOUND}"
+    echo "Initializing HEASOFT: ${HEADAS}"
+    source "${HEADAS}/headas-init.sh"
+else
+    echo "ERROR: No HEASOFT found under ${HEASOFT_BASE}/"
+    exit 1
+fi
+
+VENV_DIR="${SCRIPT_DIR}/.venv"
+if [ -f "${VENV_DIR}/bin/activate" ]; then
+    echo "Activating venv: ${VENV_DIR}"
+    source "${VENV_DIR}/bin/activate"
+else
+    echo "WARNING: No venv at ${VENV_DIR}, using system Python"
+fi
+
+# SAS (optional)
+if [ -z "${SAS_DIR:-}" ]; then
+    for sas_candidate in \
+        /home/mcoriat/Software/sas/sas-setup.sh \
+        /opt/sas/sas-setup.sh; do
+        if [ -f "${sas_candidate}" ]; then
+            export SAS_DIR="$(dirname "${sas_candidate}")"
+            set +eu; source "${sas_candidate}" 2>/dev/null; set -eu
+            break
+        fi
+    done
+fi
+
+# Quick sanity check
+echo "Checking dependencies..."
+python -c "import xspec; print(f'  XSPEC:    {xspec.__file__}')" || {
+    echo "ERROR: cannot import xspec"; exit 1; }
+python -c "import bxa; print(f'  BXA:      {bxa.__file__}')" || {
+    echo "ERROR: cannot import bxa"; exit 1; }
+echo "  All OK."
+echo ""
 
 VALIDATION_DIR="validation_$(date +%Y%m%d_%H%M)"
 SRCID_FILE="${VALIDATION_DIR}/validation_srcids.txt"
