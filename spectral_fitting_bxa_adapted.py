@@ -279,15 +279,15 @@ def get_model_and_priors(model_name, redshift=0.0,
         model, model.cflux.lg10Flux))
 
     # IIN constant priors (one per free constant).
-    # Log-uniform (flat in log-space) so the prior is
-    # symmetric around 1.0 in ratio: P(factor=2) =
-    # P(factor=0.5). Per Carrera / XMM2ATHENA convention.
+    # TODO: switch to log-uniform (flat in log-space) once
+    # BXA's create_loguniform_prior_for post-run parameter
+    # setting is verified. For now, uniform on [lo, hi].
     if use_iin:
         for gi in range(1, n_groups + 1):
             gmod = AllModels(gi)
             if not gmod.constant.factor.frozen:
                 priors.append(
-                    bxa.create_loguniform_prior_for(
+                    bxa.create_uniform_prior_for(
                         gmod, gmod.constant.factor))
 
     return model, priors
