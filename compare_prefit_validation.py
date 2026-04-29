@@ -10,7 +10,7 @@ Compare two BXA fit catalogues for the same set of SRCIDs:
 
 Produces:
   - histograms of nH, PhoIndex, lg10Flux for A vs B,
-    side-by-side and stratified by SNR bin (from the metadata
+    side-by-side and stratified by validation bin (from the metadata
     file written by select_validation_sample.py)
   - per-source scatter plots (A median vs B median) with the
     1:1 line and ±1 sigma error bars
@@ -135,7 +135,7 @@ def histograms(joint, param_pre, param_nop, label, out_dir,
                         label="LM starting NH (5e20)")
         axes[0].legend()
 
-    # Per-bin overlay if SNR bin labels are provided
+    # Per-bin overlay if stratification bin labels are provided
     if bin_label_arr is not None:
         bin_label_arr = bin_label_arr[valid]
         for bn, color in zip(("low", "mid", "high"),
@@ -152,7 +152,7 @@ def histograms(joint, param_pre, param_nop, label, out_dir,
                          color=color, histtype="step",
                          linewidth=2, ls=":")
         axes[1].set_xlabel(xlabel)
-        axes[1].set_title(f"{label} — by SNR bin")
+        axes[1].set_title(f"{label} — by stratification bin")
         axes[1].legend(fontsize=8, ncol=2)
         if label == "NH":
             axes[1].axvline(np.log10(NH_STARTING_VALUE),
@@ -260,7 +260,7 @@ def main():
     parser.add_argument("--metadata", default=None,
         help="Optional metadata FITS from "
              "select_validation_sample.py — used to overlay "
-             "SNR-bin histograms")
+             "stratification-bin histograms")
     parser.add_argument("--output_dir", required=True,
         help="Directory for plots and JSON summary")
     args = parser.parse_args()
