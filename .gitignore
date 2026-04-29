@@ -4,3 +4,5 @@ __init__.py
 merge_spectra.py.diff
 test_data/test
 .DS_Store
+EXECUTIVE_SUMMARY.md
+CHANGES.md

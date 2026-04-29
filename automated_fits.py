@@ -496,7 +496,8 @@ def process_one_source(srcid, args, output_dir,
             model_name=args.model_name,
             srcid=srcid,
             output_base=output_dir,
-            log_file=log_file
+            log_file=log_file,
+            prefit=not getattr(args, 'no_prefit', False)
         )
 
         # Background failure from fit_spectrum_bxa
@@ -669,6 +670,13 @@ def main():
         "--export_filename", default="fit_results.fits",
         help="Optional output filename for exported "
              "FITS results")
+    parser.add_argument(
+        "--no_prefit", action="store_true",
+        help="Disable the Levenberg-Marquardt pre-fit step "
+             "that tightens BXA priors. Used for the validation "
+             "experiment comparing prefit vs no-prefit "
+             "posteriors. WARNING: BXA will be 10-100x slower "
+             "without prefit, use only on small samples.")
     args = parser.parse_args()
 
     # Validate: single-source vs batch mode

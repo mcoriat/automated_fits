@@ -200,83 +200,175 @@ def _prefit_and_tighten(model, model_name, logger):
     - PhoIndex/kT: best-fit ± generous margin within
       physical bounds
 
-    If the pre-fit fails for any reason, the original wide
-    ranges are kept (safe fallback).
+    Per-parameter convergence check:
+    A parameter's prior is tightened ONLY if Levenberg-Marquardt
+    actually moved it from its starting value (relative change >
+    PARAM_MOVE_THRESHOLD or, for log-space lg10Flux, absolute
+    change > FLUX_MOVE_THRESHOLD). If a parameter did not move,
+    its prior is left at the original wide range — preventing
+    LM-non-convergence artifacts (e.g. the 5e20 cm^-2 starting-
+    value pile-up observed in 5XMM nH histograms).
+
+    If the pre-fit raises an exception, ALL priors are left at
+    the original wide ranges (safe fallback).
     """
+    # Thresholds for "did LM actually move this parameter?"
+    PARAM_MOVE_THRESHOLD = 0.01   # 1% relative change
+    FLUX_MOVE_THRESHOLD = 0.05    # 0.05 dex in log10(flux)
+
+    # ----- Record starting values BEFORE Fit.perform() -----
+    nh_start = float(model.phabs.nH.values[0])
+    flux_start = float(model.cflux.lg10Flux.values[0])
+
+    if model_name == "powerlaw":
+        shape_start = float(model.zpowerlw.PhoIndex.values[0])
+        shape_name = "PhoIndex"
+    elif model_name == "apec_single":
+        shape_start = float(model.apec.kT.values[0])
+        shape_name = "kT(apec)"
+    elif model_name == "blackbody":
+        shape_start = float(model.bbody.kT.values[0])
+        shape_name = "kT(bbody)"
+    elif model_name == "bremss":
+        shape_start = float(model.bremss.kT.values[0])
+        shape_name = "kT(bremss)"
+    else:
+        shape_start = None
+        shape_name = None
+
     try:
         Fit.perform()
         logger.info("   Pre-fit completed: "
                      f"chi2/dof = {Fit.statistic:.1f}"
                      f"/{Fit.dof}")
 
-        # --- nH ---
-        nh_val = model.phabs.nH.values[0]
-        # For nH, use log-space margin
-        if nh_val > 0:
+        # ----- Read post-fit values -----
+        nh_val = float(model.phabs.nH.values[0])
+        flux_val = float(model.cflux.lg10Flux.values[0])
+
+        # Per-parameter convergence checks
+        nh_moved = (abs(nh_val - nh_start)
+                    / max(abs(nh_start), 1e-6)
+                    > PARAM_MOVE_THRESHOLD)
+        flux_moved = (abs(flux_val - flux_start)
+                      > FLUX_MOVE_THRESHOLD)
+
+        # Log overall convergence status
+        logger.info(
+            f"   Pre-fit movement: "
+            f"nH {nh_start:.4g}→{nh_val:.4g} "
+            f"({'moved' if nh_moved else 'STUCK'}), "
+            f"lg10Flux {flux_start:.2f}→{flux_val:.2f} "
+            f"({'moved' if flux_moved else 'STUCK'})")
+
+        # --- nH: tighten only if LM moved it ---
+        if nh_moved and nh_val > 0:
             nh_lo = max(0.001, nh_val / 100.0)
             nh_hi = min(10.0, nh_val * 100.0)
+            model.phabs.nH.values = (
+                f"{nh_val},,{nh_lo},{nh_lo},{nh_hi},{nh_hi}")
+            logger.info(f"   Tightened nH: range "
+                        f"[{nh_lo:.4f}, {nh_hi:.4f}]")
         else:
-            nh_lo = 0.001
-            nh_hi = 1.0
-        model.phabs.nH.values = (
-            f"{nh_val},,{nh_lo},{nh_lo},{nh_hi},{nh_hi}")
-        logger.info(f"   Pre-fit nH={nh_val:.4f} → "
-                     f"range [{nh_lo:.4f}, {nh_hi:.4f}]")
-
-        # --- lg10Flux ---
-        flux_val = model.cflux.lg10Flux.values[0]
-        flux_lo = max(-15.0, flux_val - 2.0)
-        flux_hi = min(-9.0, flux_val + 2.0)
-        model.cflux.lg10Flux.values = (
-            f"{flux_val},,{flux_lo},{flux_lo},"
-            f"{flux_hi},{flux_hi}")
-        logger.info(f"   Pre-fit lg10Flux={flux_val:.2f} → "
-                     f"range [{flux_lo:.2f}, {flux_hi:.2f}]")
-
-        # --- Model-specific parameter ---
-        if model_name == "powerlaw":
-            ph_val = model.zpowerlw.PhoIndex.values[0]
-            ph_lo = max(1.0, ph_val - 1.0)
-            ph_hi = min(3.0, ph_val + 1.0)
-            model.zpowerlw.PhoIndex.values = (
-                f"{ph_val},,{ph_lo},{ph_lo},"
-                f"{ph_hi},{ph_hi}")
             logger.info(
-                f"   Pre-fit PhoIndex={ph_val:.2f} → "
-                f"range [{ph_lo:.2f}, {ph_hi:.2f}]")
+                "   nH NOT tightened (LM did not move it); "
+                "keeping original wide prior [0.001, 10.0]")
+
+        # --- lg10Flux: tighten only if LM moved it ---
+        if flux_moved:
+            flux_lo = max(-15.0, flux_val - 2.0)
+            flux_hi = min(-9.0, flux_val + 2.0)
+            model.cflux.lg10Flux.values = (
+                f"{flux_val},,{flux_lo},{flux_lo},"
+                f"{flux_hi},{flux_hi}")
+            logger.info(f"   Tightened lg10Flux: range "
+                        f"[{flux_lo:.2f}, {flux_hi:.2f}]")
+        else:
+            logger.info(
+                "   lg10Flux NOT tightened (LM did not move "
+                "it); keeping original wide prior [-15, -9]")
+
+        # --- Model-specific shape parameter ---
+        if model_name == "powerlaw":
+            ph_val = float(
+                model.zpowerlw.PhoIndex.values[0])
+            ph_moved = (abs(ph_val - shape_start)
+                        / max(abs(shape_start), 1e-6)
+                        > PARAM_MOVE_THRESHOLD)
+            if ph_moved:
+                ph_lo = max(1.0, ph_val - 1.0)
+                ph_hi = min(3.0, ph_val + 1.0)
+                model.zpowerlw.PhoIndex.values = (
+                    f"{ph_val},,{ph_lo},{ph_lo},"
+                    f"{ph_hi},{ph_hi}")
+                logger.info(
+                    f"   Tightened PhoIndex "
+                    f"({shape_start:.2f}→{ph_val:.2f}): "
+                    f"range [{ph_lo:.2f}, {ph_hi:.2f}]")
+            else:
+                logger.info(
+                    "   PhoIndex NOT tightened (LM did not "
+                    "move it); keeping wide prior [1.0, 3.0]")
 
         elif model_name == "apec_single":
-            kt_val = model.apec.kT.values[0]
-            kt_lo = max(0.1, kt_val / 5.0)
-            kt_hi = min(10.0, kt_val * 5.0)
-            model.apec.kT.values = (
-                f"{kt_val},,{kt_lo},{kt_lo},"
-                f"{kt_hi},{kt_hi}")
-            logger.info(
-                f"   Pre-fit kT={kt_val:.2f} → "
-                f"range [{kt_lo:.2f}, {kt_hi:.2f}]")
+            kt_val = float(model.apec.kT.values[0])
+            kt_moved = (abs(kt_val - shape_start)
+                        / max(abs(shape_start), 1e-6)
+                        > PARAM_MOVE_THRESHOLD)
+            if kt_moved:
+                kt_lo = max(0.1, kt_val / 5.0)
+                kt_hi = min(10.0, kt_val * 5.0)
+                model.apec.kT.values = (
+                    f"{kt_val},,{kt_lo},{kt_lo},"
+                    f"{kt_hi},{kt_hi}")
+                logger.info(
+                    f"   Tightened kT(apec) "
+                    f"({shape_start:.2f}→{kt_val:.2f}): "
+                    f"range [{kt_lo:.2f}, {kt_hi:.2f}]")
+            else:
+                logger.info(
+                    "   kT(apec) NOT tightened (LM did not "
+                    "move it); keeping wide prior [0.1, 10]")
 
         elif model_name == "blackbody":
-            kt_val = model.bbody.kT.values[0]
-            kt_lo = max(0.01, kt_val / 5.0)
-            kt_hi = min(2.0, kt_val * 5.0)
-            model.bbody.kT.values = (
-                f"{kt_val},,{kt_lo},{kt_lo},"
-                f"{kt_hi},{kt_hi}")
-            logger.info(
-                f"   Pre-fit kT={kt_val:.2f} → "
-                f"range [{kt_lo:.2f}, {kt_hi:.2f}]")
+            kt_val = float(model.bbody.kT.values[0])
+            kt_moved = (abs(kt_val - shape_start)
+                        / max(abs(shape_start), 1e-6)
+                        > PARAM_MOVE_THRESHOLD)
+            if kt_moved:
+                kt_lo = max(0.01, kt_val / 5.0)
+                kt_hi = min(2.0, kt_val * 5.0)
+                model.bbody.kT.values = (
+                    f"{kt_val},,{kt_lo},{kt_lo},"
+                    f"{kt_hi},{kt_hi}")
+                logger.info(
+                    f"   Tightened kT(bbody) "
+                    f"({shape_start:.2f}→{kt_val:.2f}): "
+                    f"range [{kt_lo:.2f}, {kt_hi:.2f}]")
+            else:
+                logger.info(
+                    "   kT(bbody) NOT tightened (LM did not "
+                    "move it); keeping wide prior [0.01, 2.0]")
 
         elif model_name == "bremss":
-            kt_val = model.bremss.kT.values[0]
-            kt_lo = max(0.1, kt_val / 5.0)
-            kt_hi = min(20.0, kt_val * 5.0)
-            model.bremss.kT.values = (
-                f"{kt_val},,{kt_lo},{kt_lo},"
-                f"{kt_hi},{kt_hi}")
-            logger.info(
-                f"   Pre-fit kT={kt_val:.2f} → "
-                f"range [{kt_lo:.2f}, {kt_hi:.2f}]")
+            kt_val = float(model.bremss.kT.values[0])
+            kt_moved = (abs(kt_val - shape_start)
+                        / max(abs(shape_start), 1e-6)
+                        > PARAM_MOVE_THRESHOLD)
+            if kt_moved:
+                kt_lo = max(0.1, kt_val / 5.0)
+                kt_hi = min(20.0, kt_val * 5.0)
+                model.bremss.kT.values = (
+                    f"{kt_val},,{kt_lo},{kt_lo},"
+                    f"{kt_hi},{kt_hi}")
+                logger.info(
+                    f"   Tightened kT(bremss) "
+                    f"({shape_start:.2f}→{kt_val:.2f}): "
+                    f"range [{kt_lo:.2f}, {kt_hi:.2f}]")
+            else:
+                logger.info(
+                    "   kT(bremss) NOT tightened (LM did not "
+                    "move it); keeping wide prior [0.1, 20]")
 
     except Exception as e:
         logger.warning(
@@ -462,7 +554,8 @@ def _ks_bootstrap(data, model, niter=1000):
 
 def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
                      redshift=0.0, model_name="powerlaw",
-                     output_base="bxa_fit_results", srcid="unknown", log_file="fit_spectrum_bxa.log"):
+                     output_base="bxa_fit_results", srcid="unknown", log_file="fit_spectrum_bxa.log",
+                     prefit=True):
     # Defensive: ensure redshift is a valid float
     if redshift is None:
         redshift = 0.0
@@ -491,8 +584,16 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
     AllData.ignore("**-0.3 10.0-**")
 
 
-    # Model + priors
-    model, priors_list = get_model_and_priors(model_name, redshift)
+    # Model + priors. prefit=False yields the original WIDE
+    # prior ranges and runs ultranest without LM bootstrapping
+    # (used for the validation experiment comparing prefit vs
+    # no-prefit posteriors; see EXECUTIVE_SUMMARY.md §validation).
+    if not prefit:
+        logger.info("   PREFIT DISABLED for this fit "
+                    "(--no_prefit). Using original WIDE priors. "
+                    "Expect 10-100x slower BXA convergence.")
+    model, priors_list = get_model_and_priors(
+        model_name, redshift, prefit=prefit)
 
     # Output dir
     timestamp = datetime.datetime.now().strftime("%d%m%Y_%H%M")
