@@ -84,7 +84,7 @@ def get_model_and_priors(model_name, redshift=0.0,
                          prefit=True, n_groups=1,
                          instruments=None,
                          use_iin=True,
-                         iin_bounds=(0.5, 1.5),
+                         iin_bounds=(0.5, 2.0),
                          observed_flux=True):
     """
     Construct an XSPEC model wrapped with cflux, optionally
@@ -121,7 +121,9 @@ def get_model_and_priors(model_name, redshift=0.0,
         instrument (pn) and free for others (MOS).
     iin_bounds : tuple
         (lo, hi) bounds for the free IIN constant
-        (default 0.5–1.5).
+        (default 0.5–2.0). The prior is log-uniform
+        (flat in log-space), so it is symmetric around
+        1.0 in ratio (per Carrera, following XMM2ATHENA).
     observed_flux : bool
         If True (default), use cflux*phabs*model so that
         lg10Flux measures the observed (absorbed) flux
@@ -276,13 +278,16 @@ def get_model_and_priors(model_name, redshift=0.0,
     priors.append(bxa.create_uniform_prior_for(
         model, model.cflux.lg10Flux))
 
-    # IIN constant priors (one per free constant)
+    # IIN constant priors (one per free constant).
+    # Log-uniform (flat in log-space) so the prior is
+    # symmetric around 1.0 in ratio: P(factor=2) =
+    # P(factor=0.5). Per Carrera / XMM2ATHENA convention.
     if use_iin:
         for gi in range(1, n_groups + 1):
             gmod = AllModels(gi)
             if not gmod.constant.factor.frozen:
                 priors.append(
-                    bxa.create_uniform_prior_for(
+                    bxa.create_loguniform_prior_for(
                         gmod, gmod.constant.factor))
 
     return model, priors
@@ -743,7 +748,7 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
                      redshift=0.0, model_name="powerlaw",
                      output_base="bxa_fit_results", srcid="unknown", log_file="fit_spectrum_bxa.log",
                      prefit=True, instruments=None,
-                     use_iin=True, iin_bounds=(0.5, 1.5),
+                     use_iin=True, iin_bounds=(0.5, 2.0),
                      observed_flux=True):
     # Defensive: ensure redshift is a valid float
     if redshift is None:

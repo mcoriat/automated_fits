@@ -523,7 +523,7 @@ def process_one_source(srcid, args, output_dir,
             use_iin=not getattr(args, 'no_iin', False),
             iin_bounds=(
                 getattr(args, 'iin_lo', 0.5),
-                getattr(args, 'iin_hi', 1.5)),
+                getattr(args, 'iin_hi', 2.0)),
             observed_flux=not getattr(
                 args, 'intrinsic_flux', False)
         )
@@ -724,14 +724,14 @@ def main():
         help="Disable the inter-instrument normalisation "
              "(IIN) constant. By default a multiplicative "
              "constant is included: frozen at 1.0 for pn "
-             "(reference) and free [0.5, 1.5] for MOS, "
-             "following Viitanen+25.")
+             "(reference) and free [0.5, 2.0] for MOS with "
+             "a log-uniform prior (Carrera, XMM2ATHENA).")
     parser.add_argument(
         "--iin_lo", type=float, default=0.5,
         help="Lower bound for the IIN constant (default 0.5)")
     parser.add_argument(
-        "--iin_hi", type=float, default=1.5,
-        help="Upper bound for the IIN constant (default 1.5)")
+        "--iin_hi", type=float, default=2.0,
+        help="Upper bound for the IIN constant (default 2.0)")
     args = parser.parse_args()
 
     # Validate: single-source vs batch mode
