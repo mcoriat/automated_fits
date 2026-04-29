@@ -81,7 +81,11 @@ def _is_safe_to_close(fd):
 
 def get_model_and_priors(model_name, redshift=0.0,
                          flux_band=(0.5, 10.0),
-                         prefit=True):
+                         prefit=True, n_groups=1,
+                         instruments=None,
+                         use_iin=True,
+                         iin_bounds=(0.5, 1.5),
+                         observed_flux=True):
     """
     Construct an XSPEC model wrapped with cflux, optionally
     run a quick pre-fit to tighten priors, then build BXA
@@ -102,13 +106,49 @@ def get_model_and_priors(model_name, redshift=0.0,
         parameter ranges around the best-fit before creating
         priors. This dramatically speeds up ultranest by
         reducing the prior volume.
+    n_groups : int
+        Number of XSPEC data groups (one per spectrum).
+        Used to configure per-group IIN constants.
+    instruments : list of str or None
+        Instrument identifier per data group (e.g.
+        ["pn", "MOS", "MOS"]). Used to determine which
+        group is the reference (pn → frozen constant=1).
+        If None, group 1 is used as reference.
+    use_iin : bool
+        If True, prepend a multiplicative constant to the
+        model for inter-instrument normalisation (IIN).
+        The constant is frozen at 1.0 for the reference
+        instrument (pn) and free for others (MOS).
+    iin_bounds : tuple
+        (lo, hi) bounds for the free IIN constant
+        (default 0.5–1.5).
+    observed_flux : bool
+        If True (default), use cflux*phabs*model so that
+        lg10Flux measures the observed (absorbed) flux
+        (XMM2ATHENA convention, Viitanen+25).
+        If False, use phabs*cflux*model so that lg10Flux
+        measures the intrinsic (unabsorbed) flux
+        (5XMM legacy convention).
     """
     # Defensive: ensure redshift is a valid float
     if redshift is None:
         redshift = 0.0
 
+    # Build the model expression string
+    # Absorption + emission core
+    if observed_flux:
+        # cflux wraps phabs*emission → observed flux
+        flux_prefix = "cflux*phabs*"
+    else:
+        # phabs wraps cflux*emission → intrinsic flux
+        flux_prefix = "phabs*cflux*"
+
+    # Prepend IIN constant if requested
+    iin_prefix = "constant*" if use_iin else ""
+
     if model_name == "powerlaw":
-        model = Model("phabs*cflux*zpowerlw")
+        expr = f"{iin_prefix}{flux_prefix}zpowerlw"
+        model = Model(expr)
         model.zpowerlw.Redshift = redshift
         model.zpowerlw.Redshift.frozen = True
         model.phabs.nH.values = \
@@ -118,7 +158,8 @@ def get_model_and_priors(model_name, redshift=0.0,
         model.zpowerlw.norm.frozen = True
 
     elif model_name == "apec_single":
-        model = Model("phabs*cflux*apec")
+        expr = f"{iin_prefix}{flux_prefix}apec"
+        model = Model(expr)
         model.phabs.nH.values = \
             "0.05,,0.001,0.001,10.0,10.0"
         model.apec.kT.values = \
@@ -126,7 +167,8 @@ def get_model_and_priors(model_name, redshift=0.0,
         model.apec.norm.frozen = True
 
     elif model_name == "blackbody":
-        model = Model("phabs*cflux*bbody")
+        expr = f"{iin_prefix}{flux_prefix}bbody"
+        model = Model(expr)
         model.phabs.nH.values = \
             "0.05,,0.001,0.001,10.0,10.0"
         model.bbody.kT.values = \
@@ -134,7 +176,8 @@ def get_model_and_priors(model_name, redshift=0.0,
         model.bbody.norm.frozen = True
 
     elif model_name == "bremss":
-        model = Model("phabs*cflux*bremss")
+        expr = f"{iin_prefix}{flux_prefix}bremss"
+        model = Model(expr)
         model.phabs.nH.values = \
             "0.05,,0.001,0.001,10.0,10.0"
         model.bremss.kT.values = \
@@ -144,6 +187,8 @@ def get_model_and_priors(model_name, redshift=0.0,
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
+    logger.info(f"   Model expression: {expr}")
+
     # Configure cflux energy range
     model.cflux.Emin = flux_band[0]
     model.cflux.Emax = flux_band[1]
@@ -151,6 +196,54 @@ def get_model_and_priors(model_name, redshift=0.0,
     # Starting value for lg10Flux
     model.cflux.lg10Flux.values = \
         "-12.0,,-15.0,-15.0,-9.0,-9.0"
+
+    # -------------------------------------------------
+    # Configure IIN constants per data group
+    # -------------------------------------------------
+    if use_iin:
+        # Determine which group is the reference (pn)
+        ref_group = 1  # default: first group is reference
+        if instruments is not None:
+            for gi, inst in enumerate(instruments):
+                if inst.lower() == "pn":
+                    ref_group = gi + 1  # 1-indexed
+                    break
+
+        # Group 1 (master model): freeze constant
+        model.constant.factor.values = "1.0"
+        model.constant.factor.frozen = True
+
+        # Groups 2..N: untie and configure constant
+        iin_lo, iin_hi = iin_bounds
+        for gi in range(2, n_groups + 1):
+            gmod = AllModels(gi)
+            gmod.constant.factor.untie()
+            if gi == ref_group:
+                # This group is pn (reference) — freeze
+                gmod.constant.factor.values = "1.0"
+                gmod.constant.factor.frozen = True
+            else:
+                # MOS group — free constant
+                gmod.constant.factor.frozen = False
+                gmod.constant.factor.values = (
+                    f"1.0,,{iin_lo},{iin_lo},"
+                    f"{iin_hi},{iin_hi}")
+
+        # If group 1 is NOT the reference (pn is in a later
+        # group), swap: free group 1, freeze group ref_group
+        if ref_group != 1:
+            # Free group 1 (it's MOS)
+            model.constant.factor.frozen = False
+            model.constant.factor.values = (
+                f"1.0,,{iin_lo},{iin_lo},"
+                f"{iin_hi},{iin_hi}")
+            # Freeze the pn group (already done above)
+
+        logger.info(
+            f"   IIN: {n_groups} groups, reference=group "
+            f"{ref_group} "
+            f"({'pn' if instruments else 'first'}), "
+            f"free range [{iin_lo}, {iin_hi}]")
 
     # -------------------------------------------------
     # Quick pre-fit to tighten parameter ranges
@@ -183,6 +276,15 @@ def get_model_and_priors(model_name, redshift=0.0,
     priors.append(bxa.create_uniform_prior_for(
         model, model.cflux.lg10Flux))
 
+    # IIN constant priors (one per free constant)
+    if use_iin:
+        for gi in range(1, n_groups + 1):
+            gmod = AllModels(gi)
+            if not gmod.constant.factor.frozen:
+                priors.append(
+                    bxa.create_uniform_prior_for(
+                        gmod, gmod.constant.factor))
+
     return model, priors
 
 
@@ -199,6 +301,12 @@ def _prefit_and_tighten(model, model_name, logger):
     - lg10Flux: best-fit ± 2 dex, clamped to [-15, -9]
     - PhoIndex/kT: best-fit ± generous margin within
       physical bounds
+
+    Note: the IIN constant (if present) is NOT tightened here.
+    It is configured separately in get_model_and_priors() and
+    always keeps its physical range [iin_lo, iin_hi]. LM will
+    fit it during Fit.perform() but the result is not used to
+    modify the constant's prior bounds.
 
     Per-parameter convergence check:
     A parameter's prior is tightened ONLY if Levenberg-Marquardt
@@ -552,10 +660,91 @@ def _ks_bootstrap(data, model, niter=1000):
     return ks_obs, count / niter
 
 
+# ============================================================
+# Quality flag definitions (flags 0–11)
+# ============================================================
+# 0  No issues detected
+# 1  Zero or negative source counts
+# 2  Zero or negative net counts
+# 3  Could not create merged spectrum / background fit failed
+# 4  BXA solver failed (timeout, crash, no chain)
+# 5  Poor goodness-of-fit (KS p-value < 0.01)
+# 6  PhoIndex pegged at prior boundary
+# 7  Poor GoF + PhoIndex pegged
+# 8  nH pegged at upper boundary
+# 9  Poor GoF + nH pegged
+# 10 PhoIndex pegged + nH pegged
+# 11 Poor GoF + PhoIndex pegged + nH pegged
+# ============================================================
+
+# Thresholds for quality flag checks
+GOF_PVALUE_THRESHOLD = 0.01
+PHOINDEX_PEG_MARGIN = 0.05   # within 0.05 of [1.0, 3.0]
+NH_PEG_THRESHOLD = 9.5       # near 10.0 upper cap (10^22)
+
+
+def _compute_quality_flag(results, model_name, logger):
+    """Compute post-fit quality flag (5–11) from posterior.
+
+    Called after a successful BXA fit (flag=0). Checks for:
+    - Poor goodness-of-fit (KS p-value < 0.01)
+    - PhoIndex pegged at prior limits (powerlaw only)
+    - nH pegged at upper boundary
+
+    These three issues combine into flags 5–11 via:
+        combined = gof_bad + 2*pho_pegged + 4*nh_pegged
+        flag = 4 + combined  (if combined > 0, else 0)
+
+    Returns the flag value (0 if no issues, 5–11 otherwise).
+    """
+    labels = results.get("parameter_names", [])
+    medians = results.get("posterior_median", [])
+    param_dict = dict(zip(labels, medians))
+
+    # 1. Goodness-of-fit check
+    ks_p = results.get("ks_pvalue", np.nan)
+    gof_bad = (np.isfinite(ks_p) and ks_p < GOF_PVALUE_THRESHOLD)
+
+    # 2. PhoIndex pegged check (powerlaw model only)
+    pho_pegged = False
+    if model_name == "powerlaw":
+        pho_med = param_dict.get("PhoIndex", None)
+        if pho_med is not None:
+            pho_pegged = (pho_med <= 1.0 + PHOINDEX_PEG_MARGIN
+                          or pho_med >= 3.0 - PHOINDEX_PEG_MARGIN)
+
+    # 3. nH pegged check
+    nh_pegged = False
+    nh_med = param_dict.get("nH", None)
+    if nh_med is not None:
+        nh_pegged = (nh_med >= NH_PEG_THRESHOLD)
+
+    combined = int(gof_bad) + 2 * int(pho_pegged) + 4 * int(nh_pegged)
+    flag = (4 + combined) if combined > 0 else 0
+
+    if flag > 0:
+        issues = []
+        if gof_bad:
+            issues.append(f"poor GoF (KS p={ks_p:.4f})")
+        if pho_pegged:
+            issues.append(
+                f"PhoIndex pegged ({pho_med:.3f})")
+        if nh_pegged:
+            issues.append(
+                f"nH pegged ({nh_med:.3f})")
+        logger.warning(
+            f"   Quality flag={flag}: "
+            + ", ".join(issues))
+
+    return flag
+
+
 def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
                      redshift=0.0, model_name="powerlaw",
                      output_base="bxa_fit_results", srcid="unknown", log_file="fit_spectrum_bxa.log",
-                     prefit=True):
+                     prefit=True, instruments=None,
+                     use_iin=True, iin_bounds=(0.5, 1.5),
+                     observed_flux=True):
     # Defensive: ensure redshift is a valid float
     if redshift is None:
         redshift = 0.0
@@ -573,16 +762,31 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
     Fit.statMethod = "cstat"
     Plot.device = "/null"
 
-    spectra = []
-    for i in range(len(spectrum_files)):
-        s = Spectrum(spectrum_files[i])
-        s.background = background_files[i]
-        s.response = rmf_files[i]
-        s.response.arf = arf_files[i]
-        spectra.append(s)
+    # Load each spectrum into its own data group so that the
+    # IIN constant can be configured per instrument.
+    # Syntax: "group:group filename" assigns a spectrum to a
+    # specific data group in XSPEC.
+    n_spectra = len(spectrum_files)
+    if n_spectra == 1:
+        # Single spectrum: standard loading (no IIN needed)
+        s = Spectrum(spectrum_files[0])
+        s.background = background_files[0]
+        s.response = rmf_files[0]
+        s.response.arf = arf_files[0]
+    else:
+        # Multiple spectra: load into separate data groups
+        # so each gets its own model copy (for IIN constant)
+        for i in range(n_spectra):
+            gi = i + 1  # 1-indexed group
+            AllData(f"{gi}:{gi} {spectrum_files[i]}")
+            AllData(gi).background = background_files[i]
+            AllData(gi).response = rmf_files[i]
+            AllData(gi).response.arf = arf_files[i]
 
     AllData.ignore("**-0.3 10.0-**")
 
+    # Disable IIN for single-spectrum fits (no cross-calibration)
+    effective_iin = use_iin and n_spectra > 1
 
     # Model + priors. prefit=False yields the original WIDE
     # prior ranges and runs ultranest without LM bootstrapping
@@ -593,7 +797,10 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
                     "(--no_prefit). Using original WIDE priors. "
                     "Expect 10-100x slower BXA convergence.")
     model, priors_list = get_model_and_priors(
-        model_name, redshift, prefit=prefit)
+        model_name, redshift, prefit=prefit,
+        n_groups=n_spectra, instruments=instruments,
+        use_iin=effective_iin, iin_bounds=iin_bounds,
+        observed_flux=observed_flux)
 
     # Output dir
     timestamp = datetime.datetime.now().strftime("%d%m%Y_%H%M")
@@ -752,6 +959,13 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
             "flag": 0
         }
         result.update(gof)
+
+        # ----- Post-fit quality flag (5–11) -----
+        quality_flag = _compute_quality_flag(
+            result, model_name, logger)
+        if quality_flag > 0:
+            result["flag"] = quality_flag
+
         return result
 
     else:
@@ -915,6 +1129,10 @@ def export_bxa_results_to_fits_bulk(
                          "ks_pvalue"):
             if gof_key in results:
                 row[gof_key] = results[gof_key]
+
+        # Quality flag (0 = clean, 5–11 = quality warnings)
+        if "flag" in results:
+            row["flag"] = int(results["flag"])
 
         # Fill missing columns with NaN
         for col in all_columns:

@@ -13,8 +13,17 @@ Meaning of the flags:
      0 : no issues detected
      1 : zero or negative source counts
      2 : zero or negative source counts (which also implies <=0 net counts)
-     3 : could not create merged spectrum
-     4 : fit failed
+     3 : could not create merged spectrum / background fit failed
+     4 : BXA solver failed (timeout, crash, no chain)
+     5 : poor goodness-of-fit (KS p-value < 0.01)
+     6 : PhoIndex pegged at prior boundary
+     7 : poor GoF + PhoIndex pegged
+     8 : nH pegged at upper boundary
+     9 : poor GoF + nH pegged
+    10 : PhoIndex pegged + nH pegged
+    11 : poor GoF + PhoIndex pegged + nH pegged
+    Note: flags 5-11 indicate quality warnings (fit completed,
+    posteriors are valid but should be reviewed)
 
 Output error codes
     1 : SRCID not present in the catalogue
@@ -166,7 +175,7 @@ def _load_previous_results(output_dir):
                     [float(row[f"{p}_p16"]) for p in param_names]),
                 "posterior_p84": np.array(
                     [float(row[f"{p}_p84"]) for p in param_names]),
-                "flag": 0
+                "flag": int(row["flag"]) if "flag" in colnames else 0
             }
             # Restore GoF columns if present
             for key in ("cstat", "dof", "ks_stat", "ks_pvalue"):
@@ -387,7 +396,16 @@ def process_one_source(srcid, args, output_dir,
         print(
             f'\n\n    ERROR 4: No spectra suitable for '
             f'fitting found for SRCID {srcid}\n\n')
-        return (4, None)
+        # Determine source-level flag from per-spectrum flags.
+        # flag 1 = zero/negative counts, flag 2 = zero/negative
+        # net counts, anything else = generic pre-fit failure.
+        all_spec_flags = [t[5] for t in pn_list + mos_list]
+        count_flags = [f for f in all_spec_flags if f in (1, 2)]
+        if count_flags:
+            src_flag = max(count_flags)  # 2 supersedes 1
+        else:
+            src_flag = 3  # file access or other issue
+        return (4, {"flag": src_flag})
 
     # Merge
     logger.info(
@@ -409,7 +427,7 @@ def process_one_source(srcid, args, output_dir,
         print(
             f'\n\n    ERROR 5: No merged spectra suitable '
             f'for fitting found for SRCID {srcid}\n\n')
-        return (5, None)
+        return (5, {"flag": 3})
 
     fit_list = merged_list_good
 
@@ -422,7 +440,7 @@ def process_one_source(srcid, args, output_dir,
             logger.error(
                 f"   No good spectra available for "
                 f"simultaneous fitting for source {srcid}")
-            return (5, None)
+            return (5, {"flag": 3})
 
         # === Background check (optional) ===
         if not args.skip_bkg_check:
@@ -458,7 +476,7 @@ def process_one_source(srcid, args, output_dir,
                     f"{srcid} as 3")
                 print(
                     f"   Skipping source {srcid} (flag=3)")
-                return (3, None)
+                return (3, {"flag": 3})
             fit_list = valid_specs
         # else: skip_bkg_check is True, use fit_list as-is
 
@@ -466,6 +484,7 @@ def process_one_source(srcid, args, output_dir,
         background_files = []
         rmf_files = []
         arf_files = []
+        instruments = []
 
         for spec in fit_list:
             sp_dic = spec[8]
@@ -473,6 +492,8 @@ def process_one_source(srcid, args, output_dir,
             background_files.append(sp_dic['BACKFILE'])
             rmf_files.append(sp_dic['RESPFILE'])
             arf_files.append(sp_dic['ANCRFILE'])
+            instruments.append(
+                spec[7] if len(spec) > 7 else "unknown")
 
         logger.info(
             f"   Performing simultaneous BXA fit for "
@@ -483,9 +504,9 @@ def process_one_source(srcid, args, output_dir,
             f"source {srcid} using "
             f"{len(spectrum_files)} spectra:")
 
-        for sf in spectrum_files:
-            logger.info(f"      Spectrum file: {sf}")
-            print(f"      Spectrum file: {sf}")
+        for sf, inst in zip(spectrum_files, instruments):
+            logger.info(f"      Spectrum file: {sf} ({inst})")
+            print(f"      Spectrum file: {sf} ({inst})")
 
         results = fit_spectrum_bxa(
             spectrum_files=spectrum_files,
@@ -497,7 +518,14 @@ def process_one_source(srcid, args, output_dir,
             srcid=srcid,
             output_base=output_dir,
             log_file=log_file,
-            prefit=not getattr(args, 'no_prefit', False)
+            prefit=not getattr(args, 'no_prefit', False),
+            instruments=instruments,
+            use_iin=not getattr(args, 'no_iin', False),
+            iin_bounds=(
+                getattr(args, 'iin_lo', 0.5),
+                getattr(args, 'iin_hi', 1.5)),
+            observed_flux=not getattr(
+                args, 'intrinsic_flux', False)
         )
 
         # Background failure from fit_spectrum_bxa
@@ -508,10 +536,17 @@ def process_one_source(srcid, args, output_dir,
             print(
                 f"   Skipping source {srcid} due to "
                 f"background failure (flag=3).")
-            return (3, None)
+            return (3, {"flag": 3})
 
-        if results.get("flag", 0) == 0:
-            message = "\n\nFit completed successfully "
+        flag = results.get("flag", 0)
+
+        # Flags 5–11: fit completed with quality warnings
+        #   (posteriors are valid, just flagged for review).
+        # Flag 4: BXA solver failed (no chain / no posterior).
+        if flag == 0 or flag >= 5:
+            message = "\n\nFit completed successfully"
+            if flag >= 5:
+                message += f" (quality flag={flag})"
             for par, med, p16, p84 in zip(
                     results["parameter_names"],
                     results["posterior_median"],
@@ -540,6 +575,7 @@ def process_one_source(srcid, args, output_dir,
 
             return (0, results)
         else:
+            # Flag 4 or unexpected: BXA failed, no posteriors
             logger.info('\n\n')
             message = (
                 f'\n\nFit failed with '
@@ -548,7 +584,7 @@ def process_one_source(srcid, args, output_dir,
             print(
                 f'\n\n    ERROR 6: Fit failed with '
                 f'flag={results["flag"]} \n\n')
-            return (6, None)
+            return (6, {"flag": results["flag"]})
 
     else:
         perform_spectrum_fitting(
@@ -677,6 +713,25 @@ def main():
              "experiment comparing prefit vs no-prefit "
              "posteriors. WARNING: BXA will be 10-100x slower "
              "without prefit, use only on small samples.")
+    parser.add_argument(
+        "--intrinsic_flux", action="store_true",
+        help="Use phabs*cflux*model (intrinsic/unabsorbed "
+             "flux, 5XMM legacy convention). Default is "
+             "cflux*phabs*model (observed/absorbed flux, "
+             "XMM2ATHENA convention per Viitanen+25).")
+    parser.add_argument(
+        "--no_iin", action="store_true",
+        help="Disable the inter-instrument normalisation "
+             "(IIN) constant. By default a multiplicative "
+             "constant is included: frozen at 1.0 for pn "
+             "(reference) and free [0.5, 1.5] for MOS, "
+             "following Viitanen+25.")
+    parser.add_argument(
+        "--iin_lo", type=float, default=0.5,
+        help="Lower bound for the IIN constant (default 0.5)")
+    parser.add_argument(
+        "--iin_hi", type=float, default=1.5,
+        help="Upper bound for the IIN constant (default 1.5)")
     args = parser.parse_args()
 
     # Validate: single-source vs batch mode
@@ -771,9 +826,17 @@ def main():
                     srcid_obsid_mapping=catalog_mapping,
                     dir_listing_cache=dir_cache,
                     completed_srcids=completed)
-                if code == 0 and results is not None:
+
+                # Accumulate ALL sources that returned a
+                # results dict (successful fits AND failure
+                # stubs with flag + NaN fit columns).
+                # Only errors 1-2 (source not in catalogue)
+                # return None and are excluded from the output.
+                if results is not None:
                     accumulated_results.append(
                         (srcid, results))
+
+                if code == 0:
                     n_success += 1
                     # Clean up chain files to save disk
                     if args.cleanup_chains:
