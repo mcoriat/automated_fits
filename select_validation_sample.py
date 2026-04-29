@@ -175,7 +175,10 @@ def main():
     meta_out = args.metadata or (args.output + ".meta.fits")
     sub_meta = sub.copy()
     sub_meta["VALIDATION_BIN"] = bin_label
-    sub_meta["VALIDATION_SNR"] = snr[selected_idx]
+    if args.snr_col is not None:
+        sub_meta["VALIDATION_STRAT"] = strat_vals[selected_idx]
+    else:
+        sub_meta["VALIDATION_STRAT"] = np.zeros(len(sub))
     sub_meta.write(meta_out, overwrite=True)
     print(f"Wrote metadata to {meta_out}")
     print("\nNext: run on bell with `--no_prefit` and the same "
