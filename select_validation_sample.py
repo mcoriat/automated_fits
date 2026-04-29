@@ -76,58 +76,93 @@ def main():
     print(f"  {len(tbl)} rows, columns: "
           f"{tbl.colnames[:10]}{'...' if len(tbl.colnames)>10 else ''}")
 
-    # ---- Find SNR column ----
+    # ---- Find stratification column ----
+    # Priority: user-specified > SNR-like > nH_median > random
     if args.snr_col is None:
         for cand in ("SNR", "NET_SNR", "S_N", "snr", "net_snr"):
             if cand in tbl.colnames:
                 args.snr_col = cand
                 break
+    if args.snr_col is None:
+        # Fallback: stratify by nH_median — ideal for the prefit
+        # validation because it directly targets the 5e20 pile-up
+        for cand in ("nH_median", "NH_MEDIAN", "SPEC_NH_PL",
+                      "nH", "NH"):
+            if cand in tbl.colnames:
+                args.snr_col = cand
+                if args.snr_bins == [3.0, 10.0]:
+                    # Override default SNR bins with nH-appropriate
+                    # bins: [0.03, 0.5] in 10^22 cm^-2 units
+                    # gives low (<3e20), mid (3e20-5e21),
+                    # high (>5e21)
+                    args.snr_bins = [0.03, 0.5]
+                    print("  Auto-selected nH stratification "
+                          f"with bins {args.snr_bins}")
+                break
     if args.snr_col is None or args.snr_col not in tbl.colnames:
-        print("ERROR: No SNR column found. Available columns:")
-        for c in tbl.colnames:
-            print(f"  {c}")
-        print("Use --snr_col to specify one.")
-        sys.exit(1)
-    print(f"  Using SNR column: {args.snr_col}")
+        # Last resort: no stratification, uniform random sample
+        print("  WARNING: No suitable column for stratification. "
+              "Falling back to uniform random sampling.")
+        args.snr_col = None
+    if args.snr_col is not None:
+        print(f"  Stratifying on: {args.snr_col}, "
+              f"bins: {args.snr_bins}")
 
     if "SRCID" not in tbl.colnames:
         print("ERROR: catalogue has no SRCID column")
         sys.exit(1)
 
-    # ---- Drop rows with missing/invalid SNR ----
-    snr = np.asarray(tbl[args.snr_col], dtype=float)
-    valid = np.isfinite(snr) & (snr > 0)
-    print(f"  Rows with valid SNR: {valid.sum()} / {len(tbl)}")
-    tbl = tbl[valid]
-    snr = snr[valid]
-
-    # ---- Stratify ----
-    snr_lo, snr_hi = args.snr_bins
-    bins = {
-        "low":  (snr < snr_lo),
-        "mid":  (snr >= snr_lo) & (snr < snr_hi),
-        "high": (snr >= snr_hi),
-    }
-    print(f"\nSNR bins (cuts {snr_lo} / {snr_hi}):")
-    for name, mask in bins.items():
-        print(f"  {name:>5}: {mask.sum():>8} sources")
-
+    # ---- Stratified or random selection ----
     rng = np.random.default_rng(args.seed)
-    selected_idx = []
-    bin_label = []
-    for name, mask in bins.items():
-        idx = np.where(mask)[0]
-        if len(idx) == 0:
-            print(f"  WARNING: bin {name} is empty, skipping")
-            continue
-        n_sel = min(args.n_per_bin, len(idx))
-        chosen = rng.choice(idx, size=n_sel, replace=False)
-        selected_idx.extend(chosen.tolist())
-        bin_label.extend([name] * n_sel)
-        print(f"  selected {n_sel} from {name}")
+    total_n = 3 * args.n_per_bin  # target sample size
 
-    selected_idx = np.array(selected_idx)
-    bin_label = np.array(bin_label)
+    if args.snr_col is not None:
+        # Drop rows with missing/invalid values
+        strat_vals = np.asarray(tbl[args.snr_col], dtype=float)
+        valid = np.isfinite(strat_vals) & (strat_vals > 0)
+        print(f"  Rows with valid {args.snr_col}: "
+              f"{valid.sum()} / {len(tbl)}")
+        tbl = tbl[valid]
+        strat_vals = strat_vals[valid]
+
+        # Stratify
+        snr_lo, snr_hi = args.snr_bins
+        bins = {
+            "low":  (strat_vals < snr_lo),
+            "mid":  (strat_vals >= snr_lo)
+                    & (strat_vals < snr_hi),
+            "high": (strat_vals >= snr_hi),
+        }
+        print(f"\n{args.snr_col} bins "
+              f"(cuts {snr_lo} / {snr_hi}):")
+        for name, mask in bins.items():
+            print(f"  {name:>5}: {mask.sum():>8} sources")
+
+        selected_idx = []
+        bin_label = []
+        for name, mask in bins.items():
+            idx = np.where(mask)[0]
+            if len(idx) == 0:
+                print(f"  WARNING: bin {name} is empty, "
+                      "skipping")
+                continue
+            n_sel = min(args.n_per_bin, len(idx))
+            chosen = rng.choice(idx, size=n_sel, replace=False)
+            selected_idx.extend(chosen.tolist())
+            bin_label.extend([name] * n_sel)
+            print(f"  selected {n_sel} from {name}")
+
+        selected_idx = np.array(selected_idx)
+        bin_label = np.array(bin_label)
+    else:
+        # Uniform random sampling (no stratification)
+        n_sel = min(total_n, len(tbl))
+        selected_idx = rng.choice(
+            len(tbl), size=n_sel, replace=False)
+        bin_label = np.array(["random"] * n_sel)
+        print(f"\nRandom sample: {n_sel} sources "
+              f"(from {len(tbl)})")
+
     sub = tbl[selected_idx]
 
     # ---- Write SRCID list ----
