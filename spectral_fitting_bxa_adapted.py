@@ -574,31 +574,52 @@ def _compute_goodness_of_fit(labels, posterior_median,
            "ks_stat": np.nan, "ks_pvalue": np.nan}
 
     try:
-        # Set model parameters to posterior medians
-        m = AllModels(1)
+        # Set model parameters to posterior medians.
+        # Must handle two BXA naming conventions:
+        #   - uniform priors:     label = XSPEC name (e.g. "nH")
+        #   - log-uniform priors: label = "log(name)" and the
+        #     chain stores log10(value), so convert back.
+        # Search across ALL data groups (not just group 1)
+        # so that IIN constants on groups 2+ get set too.
+        n_groups = AllData.nSpectra
         for name, value in zip(labels, posterior_median):
-            # BXA labels are like "nH", "PhoIndex", "lg10Flux"
-            # XSPEC parameter access via model component attributes
-            for ci in range(1, m.nParameters + 1):
-                p = m(ci)
-                if p.name == name:
-                    if not p.frozen:
-                        p.values = [float(value)]
+            if name.startswith("log(") and name.endswith(")"):
+                xspec_name = name[4:-1]   # "log(factor)" → "factor"
+                xspec_value = 10**value   # log10 → linear
+            else:
+                xspec_name = name
+                xspec_value = float(value)
+
+            set_ok = False
+            for gi in range(1, n_groups + 1):
+                m = AllModels(gi)
+                for ci in range(1, m.nParameters + 1):
+                    p = m(ci)
+                    if p.name == xspec_name and not p.frozen:
+                        p.values = [float(xspec_value)]
+                        set_ok = True
+                        break
+                if set_ok:
                     break
 
-        # C-stat and dof
-        Fit.perform()  # re-evaluate statistic at posterior medians
+        # C-stat and dof — just read, do NOT re-fit.
+        # Fit.perform() would re-optimise from here and
+        # can step outside tightened hard limits.  After
+        # setting parameters, Plot("counts") forces XSPEC
+        # to evaluate the folded model, which updates the
+        # statistic.
+        Plot.device = "/null"
+        Plot.xAxis = "channel"
+        Plot("counts")
         gof["cstat"] = float(Fit.statistic)
         gof["dof"] = int(Fit.dof)
 
         # Get observed and model-predicted counts per channel
-        # across all loaded spectra (for KS test)
+        # across all loaded spectra (for KS test).
+        # Plot("counts") already called above; data is ready.
         data_all = []
         model_all = []
         for si in range(1, AllData.nSpectra + 1):
-            Plot.device = "/null"
-            Plot.xAxis = "channel"
-            Plot("counts")
             # Plot.y(si) = observed counts,
             # Plot.model(si) = folded model counts
             obs = np.array(Plot.y(si))
