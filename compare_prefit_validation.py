@@ -66,7 +66,10 @@ PARAM_CANDIDATES = {
 # ±NH_STARTING_VALUE_TOL dex of the starting value 5e20 cm^-2
 # (= 0.05 in 10^22 units).
 NH_STARTING_VALUE = 0.05      # 10^22 cm^-2 = 5e20 cm^-2
-NH_STARTING_VALUE_TOL = 0.05  # dex window around 5e20
+NH_STARTING_VALUE_TOL = 0.15  # dex window around 5e20
+# Note: ±0.15 dex covers ~3.5e20 – 7e20 cm^-2, wide enough to
+# catch partial-convergence pile-ups where LM moved nH slightly
+# from the starting value before getting stuck.
 
 
 def find_col(tbl, candidates, label):
@@ -138,6 +141,14 @@ def histograms(joint, param_pre, param_nop, label, out_dir,
     # Per-bin overlay if stratification bin labels are provided
     if bin_label_arr is not None:
         bin_label_arr = bin_label_arr[valid]
+        # FITS columns may store strings as byte-strings (b'low');
+        # decode to str for reliable comparison.
+        try:
+            bin_label_arr = np.array(
+                [x.decode() if isinstance(x, bytes) else str(x)
+                 for x in bin_label_arr])
+        except Exception:
+            pass
         for bn, color in zip(("low", "mid", "high"),
                              ("C2", "C3", "C4")):
             mask = bin_label_arr == bn
@@ -216,6 +227,15 @@ def stats_summary(joint, param_pre, param_nop, label):
             np.abs(a_log - log_start) < NH_STARTING_VALUE_TOL)
         b_pile = np.sum(
             np.abs(b_log - log_start) < NH_STARTING_VALUE_TOL)
+        # Also count excess in the broader low-nH region
+        # (1e20 – 1e21 cm^-2). This captures both the starting-
+        # value pile-up AND partial-convergence cases.
+        low_nh_cut = np.log10(0.01)   # 1e20 cm^-2
+        mid_nh_cut = np.log10(0.1)    # 1e21 cm^-2
+        a_low = np.sum(
+            (a_log >= low_nh_cut) & (a_log < mid_nh_cut))
+        b_low = np.sum(
+            (b_log >= low_nh_cut) & (b_log < mid_nh_cut))
         ks = ks_2samp(a_log, b_log)
         mw = mannwhitneyu(a_log, b_log, alternative="two-sided")
         return {
@@ -233,6 +253,9 @@ def stats_summary(joint, param_pre, param_nop, label):
             "starting_value_window_dex":
                 float(NH_STARTING_VALUE_TOL),
             "starting_value": float(NH_STARTING_VALUE),
+            "low_nh_excess_prefit": int(a_low),
+            "low_nh_excess_no_prefit": int(b_low),
+            "low_nh_range": "1e20 - 1e21 cm^-2",
         }
     else:
         ks = ks_2samp(a, b)
@@ -359,13 +382,27 @@ def main():
             ratio = (s['starting_value_pileup_prefit']
                      / max(1, s['starting_value_pileup_no_prefit']))
             print(f"    ratio       : {ratio:.2f}x")
-            if ratio > 2.0:
+            if ratio > 1.5:
                 print("    >>> SIGNIFICANT pile-up in prefit "
                       "run: LM-non-convergence artifact "
                       "confirmed")
             else:
-                print("    >>> No significant pile-up: prefit "
-                      "is innocent for this peak")
+                print("    >>> No significant pile-up near "
+                      "LM starting value")
+            # Broader low-nH excess metric
+            a_low = s.get("low_nh_excess_prefit", 0)
+            b_low = s.get("low_nh_excess_no_prefit", 0)
+            print(f"\n  Low-nH excess "
+                  f"({s.get('low_nh_range', '1e20-1e21')}):")
+            print(f"    prefit=True : {a_low} sources")
+            print(f"    no_prefit   : {b_low} sources")
+            low_ratio = a_low / max(1, b_low)
+            print(f"    ratio       : {low_ratio:.2f}x")
+            if low_ratio > 1.3:
+                print("    >>> prefit pushes sources toward "
+                      "low nH (partial LM convergence bias)")
+            else:
+                print("    >>> No significant low-nH excess")
 
 
 if __name__ == "__main__":
