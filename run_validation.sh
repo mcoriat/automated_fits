@@ -38,6 +38,7 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(pwd)}"
 RESPONSES_DIR="${RESPONSES_DIR:-/home/mcoriat/XMM/RESPONSES}"
 CATALOG="${CATALOG:-/home/mcoriat/XMM/5XMM/entry_products/5xmm_pps_matched_for_spec_pipe.fits}"
 MODEL_NAME="${MODEL_NAME:-powerlaw}"
+SUBDIR="${SUBDIR:-product}"   # 'product' (5XMM) or 'pps' (4XMM)
 HEASOFT_BASE="${HEASOFT_BASE:-/home/mcoriat/Software}"
 
 # -- ARGS --
@@ -145,6 +146,7 @@ for chunk in "${VALIDATION_DIR}"/chunk_*; do
             --srcid_file "${chunk}" \
             --use_bxa \
             --model_name "${MODEL_NAME}" \
+            --subdir "${SUBDIR}" \
             --no_prefit \
             --export_results_fits \
             --export_filename "${out_fits}" \
