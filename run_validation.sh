@@ -32,11 +32,11 @@ set -e
 set -u
 
 # -- USER CONFIG --
-PRODUCTION_CATALOG="${PRODUCTION_CATALOG:-fit_results_all.fits}"
-DATA_DIR="${DATA_DIR:-/path/to/5XMM/data}"
+PRODUCTION_CATALOG="${PRODUCTION_CATALOG:-/data/scratch/pipeline_output/fit_results_all.fits}"
+DATA_DIR="${DATA_DIR:-/storage/xmmcat/5XMM_data/Spectra}"
 SCRIPT_DIR="${SCRIPT_DIR:-$(pwd)}"
-RESPONSES_DIR="${RESPONSES_DIR:-${SCRIPT_DIR}/RESPONSES}"
-CATALOG="${CATALOG:-/path/to/stacked_catalog.fits}"
+RESPONSES_DIR="${RESPONSES_DIR:-/home/mcoriat/XMM/RESPONSES}"
+CATALOG="${CATALOG:-/home/mcoriat/XMM/5XMM/entry_products/5xmm_pps_matched_for_spec_pipe.fits}"
 MODEL_NAME="${MODEL_NAME:-powerlaw}"
 
 # -- ARGS --
