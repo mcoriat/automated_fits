@@ -79,6 +79,41 @@ def _is_safe_to_close(fd):
     return True
 
 
+def _create_logflat_prior_for(model, param):
+    """Log-uniform (Jeffreys) prior for an XSPEC parameter.
+
+    Samples uniformly in log-space — symmetric around 1.0 in
+    ratio — but stores the LINEAR value in the chain.  This
+    avoids bxa.create_loguniform_prior_for's post-run bug where
+    BXA tries to set the log10 value back to the XSPEC parameter
+    without exponentiating.
+
+    Works by creating a standard BXA uniform prior (for its
+    internal bookkeeping) then replacing the transform function
+    with one that maps [0,1] → 10^(loglo + u*(loghi − loglo)).
+    The chain column keeps the original XSPEC name ("factor",
+    not "log(factor)").
+    """
+    # Build a standard uniform prior so we inherit all of
+    # BXA's internal attributes (paramname, param ref, etc.)
+    base = bxa.create_uniform_prior_for(model, param)
+
+    lo = float(param.values[2])   # XSPEC hard min
+    hi = float(param.values[5])   # XSPEC hard max
+    log_lo = np.log10(lo)
+    log_hi = np.log10(hi)
+
+    def transform(cube):
+        return 10 ** (log_lo + cube * (log_hi - log_lo))
+
+    # Copy BXA's bookkeeping attributes
+    transform.paramname = base.paramname   # "factor"
+    if hasattr(base, 'param'):
+        transform.param = base.param
+
+    return transform
+
+
 def get_model_and_priors(model_name, redshift=0.0,
                          flux_band=(0.5, 10.0),
                          prefit=True, n_groups=1,
@@ -279,15 +314,18 @@ def get_model_and_priors(model_name, redshift=0.0,
         model, model.cflux.lg10Flux))
 
     # IIN constant priors (one per free constant).
-    # TODO: switch to log-uniform (flat in log-space) once
-    # BXA's create_loguniform_prior_for post-run parameter
-    # setting is verified. For now, uniform on [lo, hi].
+    # Log-uniform (Jeffreys) prior — flat in log-space, so
+    # the prior is symmetric around 1.0 in ratio: P(factor=2)
+    # = P(factor=0.5).  Per Carrera / XMM2ATHENA convention.
+    # Uses our custom _create_logflat_prior_for (not BXA's
+    # create_loguniform_prior_for) to store the LINEAR value
+    # in the chain and avoid BXA's post-run conversion bug.
     if use_iin:
         for gi in range(1, n_groups + 1):
             gmod = AllModels(gi)
             if not gmod.constant.factor.frozen:
                 priors.append(
-                    bxa.create_uniform_prior_for(
+                    _create_logflat_prior_for(
                         gmod, gmod.constant.factor))
 
     return model, priors
