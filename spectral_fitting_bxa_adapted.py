@@ -88,30 +88,37 @@ def _create_logflat_prior_for(model, param):
     BXA tries to set the log10 value back to the XSPEC parameter
     without exponentiating.
 
-    Works by creating a standard BXA uniform prior (for its
-    internal bookkeeping) then replacing the transform function
+    Works by creating a standard BXA uniform prior (to discover
+    BXA's expected return format), then replacing the transform
     with one that maps [0,1] → 10^(loglo + u*(loghi − loglo)).
     The chain column keeps the original XSPEC name ("factor",
     not "log(factor)").
-    """
-    # Build a standard uniform prior so we inherit all of
-    # BXA's internal attributes (paramname, param ref, etc.)
-    base = bxa.create_uniform_prior_for(model, param)
 
+    Handles both BXA prior formats:
+      - newer BXA: returns a dict  {'paramname':…, 'transform':…, …}
+      - older BXA: returns a callable with .paramname attribute
+    """
     lo = float(param.values[2])   # XSPEC hard min
     hi = float(param.values[5])   # XSPEC hard max
     log_lo = np.log10(lo)
     log_hi = np.log10(hi)
 
-    def transform(cube):
+    def logflat_transform(cube):
         return 10 ** (log_lo + cube * (log_hi - log_lo))
 
-    # Copy BXA's bookkeeping attributes
-    transform.paramname = base.paramname   # "factor"
-    if hasattr(base, 'param'):
-        transform.param = base.param
+    # Build a standard BXA prior to discover expected return format
+    base = bxa.create_uniform_prior_for(model, param)
 
-    return transform
+    if isinstance(base, dict):
+        # Newer BXA: priors are dicts — replace the transform in-place
+        base['transform'] = logflat_transform
+        return base
+    else:
+        # Classic BXA: priors are callables with .paramname attribute
+        logflat_transform.paramname = base.paramname
+        if hasattr(base, 'param'):
+            logflat_transform.param = base.param
+        return logflat_transform
 
 
 def get_model_and_priors(model_name, redshift=0.0,
