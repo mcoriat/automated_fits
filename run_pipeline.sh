@@ -39,7 +39,7 @@ OUTPUT_DIR="/data/scratch/pipeline_output"
 SRCID_FILE="${ENTRY_DIR}/srcids_for_spec_pipe.txt"
 
 # Default parallel settings
-NWORKERS=60          # Number of parallel batch jobs (Lovelace: 128 threads, keep headroom)
+NWORKERS=120         # Number of parallel batch jobs (Lovelace: 128 threads, ~8 for OS headroom)
 MODEL="powerlaw"     # Spectral model: powerlaw, apec_single, blackbody, bremss
 SUBDIR="product"     # Subdirectory under OBS_ID: 'product' (5XMM) or 'pps' (4XMM)
 TEST_NSOURCES=10     # Number of sources for test run
