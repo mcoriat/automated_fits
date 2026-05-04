@@ -1027,7 +1027,9 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
             "posterior_p16": posterior_p16,
             "posterior_p84": posterior_p84,
             "output_dir": output_dir,
-            "flag": 0
+            "flag": 0,
+            "n_spectra": len(spectrum_files),
+            "instruments": instruments,
         }
         result.update(gof)
 
@@ -1205,6 +1207,16 @@ def export_bxa_results_to_fits_bulk(
         if "flag" in results:
             row["flag"] = int(results["flag"])
 
+        # Number of spectra fitted simultaneously
+        if "n_spectra" in results:
+            row["n_spectra"] = int(results["n_spectra"])
+
+        # Instrument identifiers per data group, e.g. "pn,MOS1,MOS2"
+        # Allows mapping factor columns to specific instruments.
+        inst_list = results.get("instruments")
+        if inst_list is not None:
+            row["instruments"] = ",".join(inst_list)
+
         # Fill missing columns with NaN
         for col in all_columns:
             if col not in row:
@@ -1252,10 +1264,19 @@ def _write_rows_to_fits(rows, fits_path):
         all_cols.update(row.keys())
 
     # Build column arrays
+    # Detect string columns (any row has a str value for that key)
+    string_cols = set()
+    for row in rows:
+        for k, v in row.items():
+            if isinstance(v, str):
+                string_cols.add(k)
+
     col_data = {}
     for col in sorted(all_cols):
         if col == "SRCID":
             col_data[col] = [row.get(col, 0) for row in rows]
+        elif col in string_cols:
+            col_data[col] = [row.get(col, "") for row in rows]
         else:
             col_data[col] = [
                 row.get(col, np.nan) for row in rows]
