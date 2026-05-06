@@ -83,16 +83,25 @@ def _create_logflat_prior_for(model, param):
     """Log-uniform (Jeffreys) prior for an XSPEC parameter.
 
     Samples uniformly in log-space — symmetric around 1.0 in
-    ratio — but stores the LINEAR value in the chain.  This
-    avoids bxa.create_loguniform_prior_for's post-run bug where
-    BXA tries to set the log10 value back to the XSPEC parameter
-    without exponentiating.
+    ratio — but stores the LINEAR value in the chain.
 
-    Works by creating a standard BXA uniform prior (to discover
-    BXA's expected return format), then replacing the transform
-    with one that maps [0,1] → 10^(loglo + u*(loghi − loglo)).
-    The chain column keeps the original XSPEC name ("factor",
-    not "log(factor)").
+    Why not just use bxa.create_loguniform_prior_for?
+    Because BXA's built-in stores LOG10 values in the chain
+    (its `transform` returns log10; the linear conversion only
+    happens transiently in `aftertransform` for the XSPEC
+    likelihood call). That would propagate log10 values into
+    the FITS output columns and break every downstream tool
+    that expects e.g. `nH_median` to be in linear units.
+
+    Our helper instead returns linear values from `transform`
+    so the chain — and therefore the exported columns — keep
+    their natural XSPEC name ("nH", "factor") and units. The
+    sampling is still uniform in log-space.
+
+    Originally written (commit a5a2f8b) to also work around a
+    post-run conversion bug in older BXA versions; that bug is
+    now fixed upstream, but the chain-units rationale above
+    still applies.
 
     Handles both BXA prior formats:
       - newer BXA: returns a dict  {'paramname':…, 'transform':…, …}
