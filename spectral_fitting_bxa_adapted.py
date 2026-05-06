@@ -196,7 +196,7 @@ def get_model_and_priors(model_name, redshift=0.0,
         model.zpowerlw.Redshift = redshift
         model.zpowerlw.Redshift.frozen = True
         model.phabs.nH.values = \
-            "0.05,,0.001,0.001,10.0,10.0"
+            "0.05,,0.001,0.001,1000.0,1000.0"
         model.zpowerlw.PhoIndex.values = \
             "2.0,,1.0,1.0,3.0,3.0"
         model.zpowerlw.norm.frozen = True
@@ -205,7 +205,7 @@ def get_model_and_priors(model_name, redshift=0.0,
         expr = f"{iin_prefix}{flux_prefix}apec"
         model = Model(expr)
         model.phabs.nH.values = \
-            "0.05,,0.001,0.001,10.0,10.0"
+            "0.05,,0.001,0.001,1000.0,1000.0"
         model.apec.kT.values = \
             "1.0,,0.1,0.1,10.0,10.0"
         model.apec.norm.frozen = True
@@ -214,7 +214,7 @@ def get_model_and_priors(model_name, redshift=0.0,
         expr = f"{iin_prefix}{flux_prefix}bbody"
         model = Model(expr)
         model.phabs.nH.values = \
-            "0.05,,0.001,0.001,10.0,10.0"
+            "0.05,,0.001,0.001,1000.0,1000.0"
         model.bbody.kT.values = \
             "0.1,,0.01,0.01,2.0,2.0"
         model.bbody.norm.frozen = True
@@ -223,7 +223,7 @@ def get_model_and_priors(model_name, redshift=0.0,
         expr = f"{iin_prefix}{flux_prefix}bremss"
         model = Model(expr)
         model.phabs.nH.values = \
-            "0.05,,0.001,0.001,10.0,10.0"
+            "0.05,,0.001,0.001,1000.0,1000.0"
         model.bremss.kT.values = \
             "5.0,,0.1,0.1,20.0,20.0"
         model.bremss.norm.frozen = True
@@ -298,8 +298,17 @@ def get_model_and_priors(model_name, redshift=0.0,
     # -------------------------------------------------
     # Build BXA priors from (possibly tightened) ranges
     # -------------------------------------------------
+    # nH: log-uniform (Jeffreys) prior — flat in log-space.
+    # Matches the D6.2/Viitanen+25 (aa55271-25) convention of
+    # a flat prior on log10(nH/cm^-2). Uses our custom
+    # _create_logflat_prior_for to store the LINEAR value in
+    # the chain, avoiding BXA's post-run conversion bug for
+    # XSPEC parameters that don't natively live in log space.
+    # The previous linear-uniform prior is the upstream-port
+    # regression that produced the 5e20 cm^-2 starting-value
+    # pile-up in 5XMM nH histograms.
     priors = [
-        bxa.create_uniform_prior_for(
+        _create_logflat_prior_for(
             model, model.phabs.nH),
     ]
 
@@ -341,16 +350,27 @@ def get_model_and_priors(model_name, redshift=0.0,
 def _prefit_and_tighten(model, model_name, logger):
     """
     Run a quick XSPEC fit (Levenberg-Marquardt) and tighten
-    the hard parameter limits around the best-fit values.
+    the hard parameter limits around the best-fit values for
+    the well-constrained parameters (lg10Flux, shape).
 
-    This reduces the prior volume by ~100–1000x, making
-    ultranest converge in minutes instead of hours.
+    This reduces the prior volume for those parameters,
+    making ultranest converge faster.
 
     The tightening strategy:
-    - nH: best-fit ± 2 dex, clamped to [0.001, 10]
-    - lg10Flux: best-fit ± 2 dex, clamped to [-15, -9]
-    - PhoIndex/kT: best-fit ± generous margin within
-      physical bounds
+    - nH:       NEVER tightened (log-uniform prior over 6 dex
+                is sampled efficiently by ultranest; tightening
+                it creates the 5e20 cm^-2 pile-up artefact
+                described in D6.2 and Viitanen+25).
+    - lg10Flux: best-fit ± 2 dex, clamped to [-15, -9].
+                Tighten only if LM actually moved it.
+                (Flux is well-determined by total counts, so
+                the tightening is artefact-safe and provides
+                a modest BXA speed-up.)
+    - PhoIndex/kT: NEVER tightened. Same rationale as nH —
+                   the original priors are already narrow
+                   enough for ultranest, and tightening
+                   creates a starting-value pile-up at the
+                   LM result for low-S/N sources.
 
     Note: the IIN constant (if present) is NOT tightened here.
     It is configured separately in get_model_and_priors() and
@@ -359,16 +379,15 @@ def _prefit_and_tighten(model, model_name, logger):
     modify the constant's prior bounds.
 
     Per-parameter convergence check:
-    A parameter's prior is tightened ONLY if Levenberg-Marquardt
-    actually moved it from its starting value (relative change >
+    For lg10Flux and the shape parameter, the prior is
+    tightened ONLY if Levenberg-Marquardt actually moved it
+    from its starting value (relative change >
     PARAM_MOVE_THRESHOLD or, for log-space lg10Flux, absolute
-    change > FLUX_MOVE_THRESHOLD). If a parameter did not move,
-    its prior is left at the original wide range — preventing
-    LM-non-convergence artifacts (e.g. the 5e20 cm^-2 starting-
-    value pile-up observed in 5XMM nH histograms).
+    change > FLUX_MOVE_THRESHOLD). If a parameter did not
+    move, its prior is left at the original wide range.
 
-    If the pre-fit raises an exception, ALL priors are left at
-    the original wide ranges (safe fallback).
+    If the pre-fit raises an exception, ALL priors are left
+    at the original wide ranges (safe fallback).
     """
     # Thresholds for "did LM actually move this parameter?"
     PARAM_MOVE_THRESHOLD = 0.01   # 1% relative change
@@ -419,18 +438,19 @@ def _prefit_and_tighten(model, model_name, logger):
             f"lg10Flux {flux_start:.2f}→{flux_val:.2f} "
             f"({'moved' if flux_moved else 'STUCK'})")
 
-        # --- nH: tighten only if LM moved it ---
-        if nh_moved and nh_val > 0:
-            nh_lo = max(0.001, nh_val / 100.0)
-            nh_hi = min(10.0, nh_val * 100.0)
-            model.phabs.nH.values = (
-                f"{nh_val},,{nh_lo},{nh_lo},{nh_hi},{nh_hi}")
-            logger.info(f"   Tightened nH: range "
-                        f"[{nh_lo:.4f}, {nh_hi:.4f}]")
-        else:
-            logger.info(
-                "   nH NOT tightened (LM did not move it); "
-                "keeping original wide prior [0.001, 10.0]")
+        # --- nH: NEVER tighten ---
+        # With a log-uniform prior over 6 dex [10^19, 10^25],
+        # ultranest samples efficiently without prefit help.
+        # Tightening Nh is precisely what creates the
+        # starting-value pile-up at 5e20 (the "attractor"
+        # effect): for low-S/N sources, LM lands near 0.05,
+        # the prior collapses around it, and the BXA posterior
+        # median follows. We log the LM movement for diagnostics
+        # only.
+        logger.info(
+            f"   nH NOT tightened (log-uniform prior kept "
+            f"wide); LM {'moved' if nh_moved else 'STUCK'} "
+            f"at {nh_val:.4g}")
 
         # --- lg10Flux: tighten only if LM moved it ---
         if flux_moved:
@@ -446,87 +466,53 @@ def _prefit_and_tighten(model, model_name, logger):
                 "   lg10Flux NOT tightened (LM did not move "
                 "it); keeping original wide prior [-15, -9]")
 
-        # --- Model-specific shape parameter ---
+        # --- Shape parameter: NEVER tighten ---
+        # Same rationale as for nH: tightening the prior around
+        # the LM result creates an attractor at the starting
+        # value for low-S/N sources (PhoIndex pile-up at 2.0,
+        # kT pile-up at the kT start). The original priors are
+        # already narrow enough for ultranest to sample
+        # efficiently. Diagnostic-only logging.
         if model_name == "powerlaw":
             ph_val = float(
                 model.zpowerlw.PhoIndex.values[0])
             ph_moved = (abs(ph_val - shape_start)
                         / max(abs(shape_start), 1e-6)
                         > PARAM_MOVE_THRESHOLD)
-            if ph_moved:
-                ph_lo = max(1.0, ph_val - 1.0)
-                ph_hi = min(3.0, ph_val + 1.0)
-                model.zpowerlw.PhoIndex.values = (
-                    f"{ph_val},,{ph_lo},{ph_lo},"
-                    f"{ph_hi},{ph_hi}")
-                logger.info(
-                    f"   Tightened PhoIndex "
-                    f"({shape_start:.2f}→{ph_val:.2f}): "
-                    f"range [{ph_lo:.2f}, {ph_hi:.2f}]")
-            else:
-                logger.info(
-                    "   PhoIndex NOT tightened (LM did not "
-                    "move it); keeping wide prior [1.0, 3.0]")
+            logger.info(
+                f"   PhoIndex NOT tightened (kept wide); "
+                f"LM {'moved' if ph_moved else 'STUCK'} "
+                f"at {ph_val:.3f}")
 
         elif model_name == "apec_single":
             kt_val = float(model.apec.kT.values[0])
             kt_moved = (abs(kt_val - shape_start)
                         / max(abs(shape_start), 1e-6)
                         > PARAM_MOVE_THRESHOLD)
-            if kt_moved:
-                kt_lo = max(0.1, kt_val / 5.0)
-                kt_hi = min(10.0, kt_val * 5.0)
-                model.apec.kT.values = (
-                    f"{kt_val},,{kt_lo},{kt_lo},"
-                    f"{kt_hi},{kt_hi}")
-                logger.info(
-                    f"   Tightened kT(apec) "
-                    f"({shape_start:.2f}→{kt_val:.2f}): "
-                    f"range [{kt_lo:.2f}, {kt_hi:.2f}]")
-            else:
-                logger.info(
-                    "   kT(apec) NOT tightened (LM did not "
-                    "move it); keeping wide prior [0.1, 10]")
+            logger.info(
+                f"   kT(apec) NOT tightened (kept wide); "
+                f"LM {'moved' if kt_moved else 'STUCK'} "
+                f"at {kt_val:.3f}")
 
         elif model_name == "blackbody":
             kt_val = float(model.bbody.kT.values[0])
             kt_moved = (abs(kt_val - shape_start)
                         / max(abs(shape_start), 1e-6)
                         > PARAM_MOVE_THRESHOLD)
-            if kt_moved:
-                kt_lo = max(0.01, kt_val / 5.0)
-                kt_hi = min(2.0, kt_val * 5.0)
-                model.bbody.kT.values = (
-                    f"{kt_val},,{kt_lo},{kt_lo},"
-                    f"{kt_hi},{kt_hi}")
-                logger.info(
-                    f"   Tightened kT(bbody) "
-                    f"({shape_start:.2f}→{kt_val:.2f}): "
-                    f"range [{kt_lo:.2f}, {kt_hi:.2f}]")
-            else:
-                logger.info(
-                    "   kT(bbody) NOT tightened (LM did not "
-                    "move it); keeping wide prior [0.01, 2.0]")
+            logger.info(
+                f"   kT(bbody) NOT tightened (kept wide); "
+                f"LM {'moved' if kt_moved else 'STUCK'} "
+                f"at {kt_val:.3f}")
 
         elif model_name == "bremss":
             kt_val = float(model.bremss.kT.values[0])
             kt_moved = (abs(kt_val - shape_start)
                         / max(abs(shape_start), 1e-6)
                         > PARAM_MOVE_THRESHOLD)
-            if kt_moved:
-                kt_lo = max(0.1, kt_val / 5.0)
-                kt_hi = min(20.0, kt_val * 5.0)
-                model.bremss.kT.values = (
-                    f"{kt_val},,{kt_lo},{kt_lo},"
-                    f"{kt_hi},{kt_hi}")
-                logger.info(
-                    f"   Tightened kT(bremss) "
-                    f"({shape_start:.2f}→{kt_val:.2f}): "
-                    f"range [{kt_lo:.2f}, {kt_hi:.2f}]")
-            else:
-                logger.info(
-                    "   kT(bremss) NOT tightened (LM did not "
-                    "move it); keeping wide prior [0.1, 20]")
+            logger.info(
+                f"   kT(bremss) NOT tightened (kept wide); "
+                f"LM {'moved' if kt_moved else 'STUCK'} "
+                f"at {kt_val:.3f}")
 
     except Exception as e:
         logger.warning(
@@ -751,7 +737,8 @@ def _ks_bootstrap(data, model, niter=1000):
 # Thresholds for quality flag checks
 GOF_PVALUE_THRESHOLD = 0.01
 PHOINDEX_PEG_MARGIN = 0.05   # within 0.05 of [1.0, 3.0]
-NH_PEG_THRESHOLD = 9.5       # near 10.0 upper cap (10^22)
+NH_PEG_THRESHOLD = 100.0     # = 10^24 cm^-2 (Compton-thick);
+                             # prior cap is now 1000.0 (10^25).
 
 
 def _compute_quality_flag(results, model_name, logger):
