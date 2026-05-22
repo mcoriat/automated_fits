@@ -818,9 +818,24 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
 
     logger.info('\n')
     logger.info(f'Starting BXA fit on {len(spectrum_files)} spectrum file(s)')
+    # Defensive: SPECFILE is occasionally empty for some
+    # sources (silent upstream failure in merge_spectra). Skip
+    # chdir in that case and let XSPEC try to open the path
+    # directly — this surfaces the real error upstream instead
+    # of crashing on chdir('').
+    if not spectrum_files[0]:
+        raise FileNotFoundError(
+            f"spectrum_files[0] is empty for SRCID {srcid} — "
+            f"likely a silent failure in merge_spectra "
+            f"upstream. Spec list: {spectrum_files!r}")
     dirname = os.path.dirname(spectrum_files[0])
-    os.chdir(dirname)
-    logger.info(f'   Changing focus to {dirname}')
+    if dirname:
+        os.chdir(dirname)
+        logger.info(f'   Changing focus to {dirname}')
+    else:
+        logger.warning(
+            f'   spectrum_files[0]={spectrum_files[0]!r} has '
+            f'no directory component; skipping chdir')
 
     # Background check already done by the caller (automated_fits.py)
     AllData.clear()
