@@ -8,17 +8,18 @@ All output written to{output_dir}/{srcid}/ , which is created if it does not exi
 Logger file is {output_dir}/{srcid}/{srcid}_process_log_{model_name}.txt , which is overwritten if it exists
 
 Meaning of the flags:
-    -2 : cannot open spectral file
-    -1 : cannot open background file
+    -2 : cannot open spectral file            (internal to check_spectra, never exported)
+    -1 : cannot open background file          (internal to check_spectra, never exported)
      0 : no issues detected
-     1 : zero or negative source counts
-     2 : zero or negative source counts (which also implies <=0 net counts)
-     3 : could not create merged spectrum / background fit failed
+     1 : zero or negative background counts
+     2 : zero or negative source (total) or net counts
+     3 : could not create merged spectrum, or the pre-BXA
+         quick-fit screen failed / gave p < 0.01
      4 : BXA solver failed (timeout, crash, no chain)
      5 : poor goodness-of-fit (KS p-value < 0.01)
      6 : PhoIndex pegged at prior boundary
      7 : poor GoF + PhoIndex pegged
-     8 : nH pegged at upper boundary
+     8 : nH median >= 1e24 cm^-2 (Compton-thick; the prior cap is 1e25, so this is not a true prior peg)
      9 : poor GoF + nH pegged
     10 : PhoIndex pegged + nH pegged
     11 : poor GoF + PhoIndex pegged + nH pegged
@@ -142,20 +143,26 @@ def _load_completed_srcids(output_dir):
     return completed
 
 
-def _load_previous_results(output_dir):
-    """Load existing fit results from fit_results*.fits files
+def _load_previous_results(output_dir, export_filename):
+    """Load existing fit results from THIS run's own export file
     as (srcid, results_dict) tuples suitable for accumulated_results.
 
     Used on --resume to pre-seed accumulated_results so that the
     final export preserves results from a previous (interrupted) run.
     Without this, the final export overwrites the FITS file with
     only the new results, losing the earlier ones.
+
+    Deliberately restricted to the single file this process
+    exports to (e.g. fit_results_chunk_007.fits): when several
+    chunk workers share output_dir, globbing fit_results*.fits
+    here would pull every OTHER chunk's rows (and a previously
+    merged fit_results_all.fits) into this chunk's accumulator,
+    duplicating them at the next merge. Skipping decisions,
+    by contrast, DO consider all files (_load_completed_srcids).
     """
     from astropy.table import Table
-    import glob as globmod
     previous = []
-    pattern = os.path.join(output_dir, "fit_results*.fits")
-    for fpath in sorted(globmod.glob(pattern)):
+    for fpath in [os.path.join(output_dir, export_filename)]:
         try:
             t = Table.read(fpath)
         except Exception:
@@ -397,8 +404,9 @@ def process_one_source(srcid, args, output_dir,
             f'\n\n    ERROR 4: No spectra suitable for '
             f'fitting found for SRCID {srcid}\n\n')
         # Determine source-level flag from per-spectrum flags.
-        # flag 1 = zero/negative counts, flag 2 = zero/negative
-        # net counts, anything else = generic pre-fit failure.
+        # flag 1 = zero/negative background counts, flag 2 =
+        # zero/negative source (total) or net counts, anything
+        # else = generic pre-fit failure.
         all_spec_flags = [t[5] for t in pn_list + mos_list]
         count_flags = [f for f in all_spec_flags if f in (1, 2)]
         if count_flags:
@@ -708,11 +716,12 @@ def main():
              "FITS results")
     parser.add_argument(
         "--no_prefit", action="store_true",
-        help="Disable the Levenberg-Marquardt pre-fit step "
-             "that tightens BXA priors. Used for the validation "
-             "experiment comparing prefit vs no-prefit "
-             "posteriors. WARNING: BXA will be 10-100x slower "
-             "without prefit, use only on small samples.")
+        help="Disable the Levenberg-Marquardt pre-fit step. "
+             "The pre-fit only tightens the lg10Flux prior "
+             "(never nH or the shape parameter), so disabling "
+             "it costs a modest amount of BXA time. The "
+             "5XMM-DR15 production run used --no_prefit to "
+             "match the D6.2/Viitanen+25 setup.")
     parser.add_argument(
         "--intrinsic_flux", action="store_true",
         help="Use phabs*cflux*model (intrinsic/unabsorbed "
@@ -799,7 +808,7 @@ def main():
                 # Pre-load previous results so the final export
                 # preserves them (otherwise they get overwritten)
                 accumulated_results = _load_previous_results(
-                    output_dir)
+                    output_dir, args.export_filename)
                 n_preloaded = len(accumulated_results)
                 print(f" Pre-loaded {n_preloaded} previous "
                       f"results into accumulator")
@@ -809,6 +818,10 @@ def main():
         n_fail = 0
         n_flushed = n_preloaded  # results already written to disk
         FLUSH_EVERY = 50       # save results every N fits
+        # Chain dirs whose results are not yet flushed to FITS
+        # (cleanup is deferred until after a successful flush so
+        # a crash cannot lose fits that only existed as chains)
+        pending_cleanup = []
 
         for i, srcid in enumerate(srcids):
             # Save/restore cwd (BXA + XSPEC chdir)
@@ -838,10 +851,20 @@ def main():
 
                 if code == 0:
                     n_success += 1
-                    # Clean up chain files to save disk
+                    # Clean up chain files to save disk.
+                    # When results are exported to FITS, the
+                    # cleanup is DEFERRED until after the next
+                    # successful flush: deleting the chain
+                    # before its summary row is on disk would
+                    # make the fit unrecoverable if the worker
+                    # dies inside the flush window.
                     if args.cleanup_chains:
-                        _cleanup_chain_dir(
-                            results, srcid, output_dir)
+                        if args.export_results_fits:
+                            pending_cleanup.append(
+                                (srcid, results))
+                        else:
+                            _cleanup_chain_dir(
+                                results, srcid, output_dir)
                     # Periodic flush: save results to FITS
                     # so they survive restarts and are
                     # visible to --skip_completed
@@ -854,6 +877,12 @@ def main():
                             output_base=output_dir,
                             fits_filename=args.export_filename)
                         n_flushed = len(accumulated_results)
+                        # Results are safely on disk — now the
+                        # corresponding chains can go
+                        for c_srcid, c_results in pending_cleanup:
+                            _cleanup_chain_dir(
+                                c_results, c_srcid, output_dir)
+                        pending_cleanup = []
                 else:
                     n_fail += 1
                     logger.info(
@@ -911,6 +940,11 @@ def main():
                 accumulated_results,
                 output_base=output_dir,
                 fits_filename=args.export_filename)
+            # Final export done — release any chains still
+            # awaiting cleanup
+            for c_srcid, c_results in pending_cleanup:
+                _cleanup_chain_dir(c_results, c_srcid, output_dir)
+            pending_cleanup = []
 
         total_fits = n_success + n_preloaded
         _safe_print(f"\n\n Batch processing complete: "

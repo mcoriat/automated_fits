@@ -20,13 +20,12 @@ from astropy.io import fits
 import numpy as np
 import matplotlib.pyplot as plt
 import corner
-from astropy.table import Table, vstack
-import glob
+from astropy.table import Table
 import logging
 
-# python3 automated_fits.py 3067718060100029 ./test_data . ./test_data/RESPONSES ./test_data/tests ./test_data/test_catalogue.fits dummy_output.txt --use_bxa --model_name=powerlaw --redshift=1.0 --overwrite=1 --export_results_fits --export_filename=fit_results.fits --bxa_output_dir=bxa_fit_results
+# Example invocation (single-source mode):
+# python3 automated_fits.py 3067718060100029 ./test_data . ./test_data/RESPONSES ./test_data/tests ./test_data/test_catalogue.fits dummy_output.txt --use_bxa --model_name=powerlaw --redshift=1.0 --overwrite=1 --export_results_fits --export_filename=fit_results.fits
 
-#logger = logging.getLogger(__name__)
 logger = logging.getLogger()   # root logger
 
 
@@ -153,10 +152,13 @@ def get_model_and_priors(model_name, redshift=0.0,
     flux_band : tuple
         Energy band (Emin, Emax) in keV for cflux.
     prefit : bool
-        If True, run a quick Fit.perform() and tighten the
-        parameter ranges around the best-fit before creating
-        priors. This dramatically speeds up ultranest by
-        reducing the prior volume.
+        If True, run a quick Fit.perform() before creating
+        priors. Only the lg10Flux prior is tightened from the
+        result (±2 dex); nH and the shape parameter always
+        keep their full ranges (see _prefit_and_tighten for
+        why). The speed-up is therefore modest. The 5XMM-DR15
+        production run disabled this step entirely
+        (--no_prefit) to match the D6.2/Viitanen+25 setup.
     n_groups : int
         Number of XSPEC data groups (one per spectrum).
         Used to configure per-group IIN constants.
@@ -359,11 +361,14 @@ def get_model_and_priors(model_name, redshift=0.0,
 def _prefit_and_tighten(model, model_name, logger):
     """
     Run a quick XSPEC fit (Levenberg-Marquardt) and tighten
-    the hard parameter limits around the best-fit values for
-    the well-constrained parameters (lg10Flux, shape).
+    the hard parameter limits around the best-fit value for
+    lg10Flux ONLY. All other parameters keep their full
+    ranges, so the resulting speed-up is modest (flux is one
+    of three-plus free parameters).
 
-    This reduces the prior volume for those parameters,
-    making ultranest converge faster.
+    NOTE: the 5XMM-DR15 production run was executed with
+    --no_prefit, i.e. this function was NOT used. It is kept
+    as an option for future experimentation.
 
     The tightening strategy:
     - nH:       NEVER tightened (log-uniform prior over 6 dex
@@ -371,10 +376,9 @@ def _prefit_and_tighten(model, model_name, logger):
                 it creates the 5e20 cm^-2 pile-up artefact
                 described in D6.2 and Viitanen+25).
     - lg10Flux: best-fit ± 2 dex, clamped to [-15, -9].
-                Tighten only if LM actually moved it.
+                Tightened only if LM actually moved it.
                 (Flux is well-determined by total counts, so
-                the tightening is artefact-safe and provides
-                a modest BXA speed-up.)
+                the tightening is artefact-safe.)
     - PhoIndex/kT: NEVER tightened. Same rationale as nH —
                    the original priors are already narrow
                    enough for ultranest, and tightening
@@ -528,13 +532,23 @@ def _prefit_and_tighten(model, model_name, logger):
             f"   Pre-fit failed ({e}), using wide priors")
     
     
-# === NEW: unified background check that always returns flag=3 on any problem ===
 def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
                          model_name, redshift, logger, srcid="unknown"):
     """
+    Pre-screen a spectrum before spending BXA time on it.
+
+    Despite the historical name, this does NOT fit a background
+    model: it performs a quick Levenberg-Marquardt fit of the
+    SOURCE model (same model as the BXA run, standard XSPEC
+    background subtraction, 0.3-10 keV) and converts the fit
+    test statistic to a p-value via the chi-squared CDF. Sources
+    with p < 0.01 are rejected as un-fittable, avoiding up to
+    30 min of BXA wall time on hopeless spectra. Callers map a
+    rejection to quality flag 3.
+
     Returns:
-      pval (float) if background is OK (>= 0.01),
-      None if background cannot be fit or p<0.01 or any exception occurred.
+      pval (float) if the spectrum passes the pre-screen (p >= 0.01),
+      None if the fit fails, p < 0.01, or any exception occurs.
     """
     from xspec import AllData, AllModels, Fit, Spectrum
     import numpy as np
@@ -599,8 +613,7 @@ def check_background_fit(spectrum_file, background_file, rmf_file, arf_file,
 
 
 
-def _compute_goodness_of_fit(labels, posterior_median,
-                             samples_array, logger):
+def _compute_goodness_of_fit(labels, posterior_median, logger):
     """Compute goodness-of-fit statistics while XSPEC is loaded.
 
     Called after BXA has finished but BEFORE AllData.clear().
@@ -621,7 +634,18 @@ def _compute_goodness_of_fit(labels, posterior_median,
         #     chain stores log10(value), so convert back.
         # Search across ALL data groups (not just group 1)
         # so that IIN constants on groups 2+ get set too.
+        # Labels could repeat if several IIN constants were
+        # free — remember which (group, param) slots are
+        # already assigned and give each repeated label the
+        # NEXT free matching parameter, in ascending group
+        # order (the order the priors were built in
+        # get_model_and_priors). NB: the standard pipeline
+        # never produces this case — merge_spectra outputs at
+        # most one pn + one MOS spectrum, so at most ONE
+        # constant is free. This is defensive support for
+        # direct fit_spectrum_bxa() calls with 3+ spectra.
         n_groups = AllData.nSpectra
+        assigned = set()
         for name, value in zip(labels, posterior_median):
             if name.startswith("log(") and name.endswith(")"):
                 xspec_name = name[4:-1]   # "log(factor)" → "factor"
@@ -634,9 +658,12 @@ def _compute_goodness_of_fit(labels, posterior_median,
             for gi in range(1, n_groups + 1):
                 m = AllModels(gi)
                 for ci in range(1, m.nParameters + 1):
+                    if (gi, ci) in assigned:
+                        continue
                     p = m(ci)
                     if p.name == xspec_name and not p.frozen:
                         p.values = [float(xspec_value)]
+                        assigned.add((gi, ci))
                         set_ok = True
                         break
                 if set_ok:
@@ -730,17 +757,19 @@ def _ks_bootstrap(data, model, niter=1000):
 # Quality flag definitions (flags 0–11)
 # ============================================================
 # 0  No issues detected
-# 1  Zero or negative source counts
-# 2  Zero or negative net counts
-# 3  Could not create merged spectrum / background fit failed
+# 1  Zero or negative background counts
+# 2  Zero or negative source (total) or net counts
+# 3  Could not create merged spectrum, or pre-screen fit
+#    failed / p < 0.01 (see check_background_fit)
 # 4  BXA solver failed (timeout, crash, no chain)
 # 5  Poor goodness-of-fit (KS p-value < 0.01)
 # 6  PhoIndex pegged at prior boundary
 # 7  Poor GoF + PhoIndex pegged
-# 8  nH pegged at upper boundary
-# 9  Poor GoF + nH pegged
-# 10 PhoIndex pegged + nH pegged
-# 11 Poor GoF + PhoIndex pegged + nH pegged
+# 8  nH median >= 100 (1e24 cm^-2, Compton-thick; NOT a true
+#    prior peg — the prior cap is 1000)
+# 9  Poor GoF + high nH
+# 10 PhoIndex pegged + high nH
+# 11 Poor GoF + PhoIndex pegged + high nH
 # ============================================================
 
 # Thresholds for quality flag checks
@@ -756,7 +785,9 @@ def _compute_quality_flag(results, model_name, logger):
     Called after a successful BXA fit (flag=0). Checks for:
     - Poor goodness-of-fit (KS p-value < 0.01)
     - PhoIndex pegged at prior limits (powerlaw only)
-    - nH pegged at upper boundary
+    - High nH (median >= NH_PEG_THRESHOLD = 1e24 cm^-2,
+      i.e. Compton-thick; the prior cap is 10x higher so
+      this is a physical selector, not a boundary peg)
 
     These three issues combine into flags 5–11 via:
         combined = gof_bad + 2*pho_pegged + 4*nh_pegged
@@ -870,14 +901,14 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
     # Disable IIN for single-spectrum fits (no cross-calibration)
     effective_iin = use_iin and n_spectra > 1
 
-    # Model + priors. prefit=False yields the original WIDE
-    # prior ranges and runs ultranest without LM bootstrapping
-    # (used for the validation experiment comparing prefit vs
-    # no-prefit posteriors; see EXECUTIVE_SUMMARY.md §validation).
+    # Model + priors. prefit=False keeps the full prior
+    # ranges and runs ultranest without the LM pre-fit.
+    # This is how the 5XMM-DR15 production run was executed
+    # (run_pipeline.sh --no_prefit), matching the
+    # D6.2/Viitanen+25 setup.
     if not prefit:
-        logger.info("   PREFIT DISABLED for this fit "
-                    "(--no_prefit). Using original WIDE priors. "
-                    "Expect 10-100x slower BXA convergence.")
+        logger.info("   Prefit disabled (--no_prefit): "
+                    "using full prior ranges.")
     model, priors_list = get_model_and_priors(
         model_name, redshift, prefit=prefit,
         n_groups=n_spectra, instruments=instruments,
@@ -1025,7 +1056,7 @@ def fit_spectrum_bxa(spectrum_files, background_files, rmf_files, arf_files,
         # Set model parameters to posterior medians so the
         # folded model reflects the Bayesian best estimate.
         gof = _compute_goodness_of_fit(
-            labels, posterior_median, samples_array, logger)
+            labels, posterior_median, logger)
 
         AllData.clear()
         AllModels.clear()
@@ -1073,11 +1104,6 @@ def export_bxa_results_to_fits(srcid, output_base="bxa_fit_results", fits_filena
         # adding/writing them to a file in the directory with the fit results
         fits_path = os.path.join(src_dir, fits_filename)
     #
-    # print('\n\n Inside export...')
-    # print(f'    output_base=({output_base})')
-    # print(f'    fits_path=({fits_path})')
-    # print(f'    src_dir=({src_dir})')
-    
     logger.info('\n')
     logger.info(f'Exporting BXA fit results to FITS file {fits_path}')
 
@@ -1179,6 +1205,16 @@ def export_bxa_results_to_fits_bulk(
     os.makedirs(output_base, exist_ok=True)
     fits_path = os.path.join(output_base, fits_filename)
 
+    # Deduplicate by SRCID, keeping the most recent result.
+    # Protects against double rows when a source is re-fitted
+    # after a resume (its old row was pre-loaded into the
+    # accumulator and its new result appended later).
+    dedup = {}
+    for srcid, results in accumulated_results:
+        if results is not None:
+            dedup[srcid] = results
+    accumulated_results = list(dedup.items())
+
     # Collect all unique column names first
     all_columns = set()
     for srcid, results in accumulated_results:
@@ -1222,8 +1258,14 @@ def export_bxa_results_to_fits_bulk(
         if "n_spectra" in results:
             row["n_spectra"] = int(results["n_spectra"])
 
-        # Instrument identifiers per data group, e.g. "pn,MOS1,MOS2"
-        # Allows mapping factor columns to specific instruments.
+        # Instrument identifiers per data group, e.g. "pn,MOS"
+        # Allows mapping the factor columns to instruments.
+        # NB: through the standard pipeline at most one IIN
+        # constant is free (merge_spectra outputs at most one
+        # pn + one MOS spectrum). If fit_spectrum_bxa() were
+        # called directly with 3+ spectra, the free constants
+        # would share the label "factor" and only the LAST one
+        # would survive as the "factor_*" columns here.
         inst_list = results.get("instruments")
         if inst_list is not None:
             row["instruments"] = ",".join(inst_list)

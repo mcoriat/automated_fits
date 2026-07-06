@@ -240,6 +240,9 @@ Options:
   --srcid_file F     Path to srcid list file
   --output_dir D     Output directory
   --cleanup_chains   Delete chain.fits/corner.png after extracting stats
+  --no_prefit        Skip the Levenberg-Marquardt pre-fit step
+                     (used for the 5XMM-DR15 production run;
+                     matches the D6.2/Viitanen+25 setup)
   --help             Show help
 ```
 
@@ -270,6 +273,17 @@ Key options:
   --skip_bkg_check      Skip background quality check
   --export_results_fits Export results to FITS table
   --export_filename F   Output FITS filename (default: fit_results.fits)
+  --no_prefit           Disable the LM pre-fit (only tightens the
+                        lg10Flux prior when enabled; DR15 production
+                        ran with --no_prefit)
+  --no_iin              Disable the inter-instrument normalisation
+                        constant (default: constant frozen at 1 for
+                        pn, free [0.5, 2.0] for MOS)
+  --iin_lo X            Lower bound of the free IIN constant (0.5)
+  --iin_hi X            Upper bound of the free IIN constant (2.0)
+  --intrinsic_flux      Measure intrinsic flux (phabs*cflux*model,
+                        5XMM legacy). Default measures observed flux
+                        (cflux*phabs*model, XMM2ATHENA convention)
   --use_galabs N        Fix foreground galactic absorption (0 or 1)
   --overwrite N         Overwrite existing model (default: 1)
 ```
@@ -328,7 +342,11 @@ Options:
     → ERROR 4 if no valid spectra
 
  6. Merge spectra per instrument (merge_spectra):
-    - Groups by instrument (PN, MOS1, MOS2)
+    - Two instrument groups: pn and MOS (MOS1+MOS2 share one group)
+    - Outputs at most ONE spectrum per group — true merging is not
+      implemented; the highest-SNR spectrum of each group is selected
+    - So a fit uses at most 2 spectra (pn + MOS), i.e. at most one
+      free inter-instrument constant
     - Returns 9-element tuples: (above 7 fields + sp_dic)
     - sp_dic keys: SPECFILE, BACKFILE, RESPFILE, ANCRFILE
     → ERROR 5 if merge fails
@@ -342,7 +360,9 @@ Options:
  8. Spectral fitting:
     BXA mode (--use_bxa):
       a. Build model and priors (get_model_and_priors)
-      b. Optional pre-fit to tighten priors (~100-1000x volume reduction)
+      b. Optional LM pre-fit; only the lg10Flux prior is
+         tightened (skipped with --no_prefit, as in the
+         DR15 production run)
       c. Run BXA/UltraNest nested sampling
       d. Read chain.fits → compute median, p16, p84
       e. Generate corner plot
@@ -464,9 +484,9 @@ Displays real-time progress of a running pipeline:
 - `STOPPED?`: Log has content but process is no longer writing
 
 **ETA calculation:** Uses the overall processing rate (all sources, including
-fast failures) rather than just the fit rate. This accounts for the high
-error rate (~75-90%) where most sources lack spectra and are processed in
-seconds.
+fast failures) rather than just the fit rate. This accounts for the ~64% of
+sources that lack extracted spectra and are processed in seconds (observed
+fit yield in the 5XMM production runs: ~36%).
 
 ---
 
@@ -502,23 +522,19 @@ pkill -9 -f "automated_fits.py"    # force (if needed)
 
 ## 11. Performance and Timing
 
-### BXA fitting (--use_bxa)
+### BXA fitting (--use_bxa) — observed in the 5XMM production runs
 
-| Metric                  | Typical value              |
+| Metric                  | Observed value             |
 |-------------------------|----------------------------|
-| Time per fit            | 2-5 minutes                |
-| Processing rate         | ~3,000 sources/hour        |
-| Fit rate                | ~350-600 fits/hour         |
-| Error rate              | ~75-90%                    |
-| Expected total fits     | ~60,000-160,000            |
-| Total runtime (30 workers) | ~8-10 days              |
+| Time per BXA fit        | typically minutes          |
+| Fit yield               | ~36% of catalogue sources  |
 | Disk (--cleanup_chains) | ~5-10 GB                   |
 | Disk (full posteriors)  | ~200+ GB                   |
 | RAM per worker          | ~1-2 GB                    |
 
-The error rate is high because most sources in the catalogue do not have
-extracted spectra on disk (ERROR 3). These are processed in seconds and do
-not significantly impact total runtime.
+The ~64% of sources that produce no fit mostly have no extracted
+spectra on disk (ERROR 3). These fail in seconds and do not
+significantly impact total runtime.
 
 ### Standard XSPEC fitting (without --use_bxa)
 
@@ -528,13 +544,18 @@ not significantly impact total runtime.
 | Speedup vs BXA          | ~20-50x                    |
 | Expected total runtime  | Hours (not days)           |
 
-### Pre-fitting optimization
+### Pre-fitting (optional, off in production)
 
-BXA uses a pre-fit step (`_prefit_and_tighten`) that:
+BXA has an optional pre-fit step (`_prefit_and_tighten`) that:
 1. Runs a quick Levenberg-Marquardt fit with wide parameter ranges
-2. Tightens prior bounds around the best-fit values
-3. Reduces the prior volume by ~100-1000x
-4. Makes UltraNest converge in minutes instead of hours
+2. Tightens the lg10Flux prior to best-fit ± 2 dex (only if LM moved it)
+3. NEVER tightens nH or the shape parameter — doing so creates a
+   starting-value pile-up artefact for low-S/N sources (the 5e20 cm^-2
+   nH peak; see D6.2 / Viitanen+25)
+
+Because only one parameter is tightened, the speed-up is modest.
+The 5XMM-DR15 production run disabled the step entirely
+(`run_pipeline.sh --no_prefit`) to match the D6.2/Viitanen+25 setup.
 
 ### Parallelism
 
@@ -569,64 +590,77 @@ for faint catalogue sources without pipeline-extracted spectra.
 
 Set by `check_spectra()` at tuple position [5]:
 
-| Flag | Meaning                          |
-|------|----------------------------------|
-| -2   | Cannot open spectral file        |
-| -1   | Cannot open background file      |
-|  0   | No issues detected               |
-|  1   | Zero or negative source counts   |
-|  2   | Zero or negative net counts      |
-|  3   | Merge or background check failed |
-|  4   | Fit failed                       |
+| Flag | Meaning                                        |
+|------|------------------------------------------------|
+| -2   | Cannot open spectral file (internal only)      |
+| -1   | Cannot open background file (internal only)    |
+|  0   | No issues detected                             |
+|  1   | Zero or negative background counts             |
+|  2   | Zero or negative source (total) or net counts  |
+|  3   | Merge failed, or pre-BXA quick-fit screen failed / p < 0.01 |
+|  4   | BXA solver failed (timeout, crash, no chain)   |
+|  5-11| Quality warnings on a completed fit (poor GoF, PhoIndex pegged, nH ≥ 1e24 cm^-2; see automated_fits.py docstring) |
 
 ---
 
 ## 13. Spectral Models
 
 All models use `phabs` for absorption and `cflux` for flux measurement
-in the 0.5-10.0 keV band.
+in the 0.5-10.0 keV band (the fit itself uses 0.3-10 keV).
 
-### powerlaw (`phabs * cflux * zpowerlw`)
+By default the flux is the OBSERVED (absorbed) flux — `cflux` wraps
+`phabs*emission` (XMM2ATHENA convention, Viitanen+25). With
+`--intrinsic_flux` the order becomes `phabs*cflux*emission` and
+lg10Flux measures the intrinsic (unabsorbed) flux (5XMM legacy).
+For simultaneous multi-instrument fits a leading `constant*` is
+prepended for the inter-instrument normalisation (IIN): frozen at 1
+for pn, free in [0.5, 2.0] with a log-uniform prior for MOS
+(disable with `--no_iin`).
 
-| Parameter | Range        | Description                              |
-|-----------|--------------|------------------------------------------|
-| nH        | 0.001 - 10.0 | Column density (10^22 cm^-2)            |
-| PhoIndex  | 1.0 - 3.0   | Photon index                             |
-| lg10Flux  | -15.0 - -9.0| log10 flux (erg/cm^2/s, 0.5-10 keV)     |
+Priors: nH is log-uniform (Jeffreys) over its full range; PhoIndex/kT
+are uniform; lg10Flux is uniform (= log-uniform on the linear flux).
 
-### apec_single (`phabs * cflux * apec`)
+### powerlaw (`constant * cflux * phabs * zpowerlw`, Redshift frozen)
 
-| Parameter | Range        | Description                              |
-|-----------|--------------|------------------------------------------|
-| nH        | 0.001 - 10.0 | Column density (10^22 cm^-2)            |
-| kT        | 0.1 - 10.0  | Plasma temperature (keV)                 |
-| lg10Flux  | -15.0 - -9.0| log10 flux (erg/cm^2/s, 0.5-10 keV)     |
+| Parameter | Range          | Description                              |
+|-----------|----------------|------------------------------------------|
+| nH        | 0.001 - 1000.0 | Column density (10^22 cm^-2), log-uniform prior |
+| PhoIndex  | 1.0 - 3.0      | Photon index                             |
+| lg10Flux  | -15.0 - -9.0   | log10 flux (erg/cm^2/s, 0.5-10 keV)      |
 
-### blackbody (`phabs * cflux * bbody`)
+### apec_single (`constant * cflux * phabs * apec`)
 
-| Parameter | Range        | Description                              |
-|-----------|--------------|------------------------------------------|
-| nH        | 0.001 - 10.0 | Column density (10^22 cm^-2)            |
-| kT        | 0.01 - 2.0  | Temperature (keV)                        |
-| lg10Flux  | -15.0 - -9.0| log10 flux (erg/cm^2/s, 0.5-10 keV)     |
+| Parameter | Range          | Description                              |
+|-----------|----------------|------------------------------------------|
+| nH        | 0.001 - 1000.0 | Column density (10^22 cm^-2), log-uniform prior |
+| kT        | 0.1 - 10.0     | Plasma temperature (keV)                 |
+| lg10Flux  | -15.0 - -9.0   | log10 flux (erg/cm^2/s, 0.5-10 keV)      |
 
-### bremss (`phabs * cflux * bremss`)
+### blackbody (`constant * cflux * phabs * bbody`)
 
-| Parameter | Range        | Description                              |
-|-----------|--------------|------------------------------------------|
-| nH        | 0.001 - 10.0 | Column density (10^22 cm^-2)            |
-| kT        | 0.1 - 20.0  | Plasma temperature (keV)                 |
-| lg10Flux  | -15.0 - -9.0| log10 flux (erg/cm^2/s, 0.5-10 keV)     |
+| Parameter | Range          | Description                              |
+|-----------|----------------|------------------------------------------|
+| nH        | 0.001 - 1000.0 | Column density (10^22 cm^-2), log-uniform prior |
+| kT        | 0.01 - 2.0     | Temperature (keV)                        |
+| lg10Flux  | -15.0 - -9.0   | log10 flux (erg/cm^2/s, 0.5-10 keV)      |
+
+### bremss (`constant * cflux * phabs * bremss`)
+
+| Parameter | Range          | Description                              |
+|-----------|----------------|------------------------------------------|
+| nH        | 0.001 - 1000.0 | Column density (10^22 cm^-2), log-uniform prior |
+| kT        | 0.1 - 20.0     | Plasma temperature (keV)                 |
+| lg10Flux  | -15.0 - -9.0   | log10 flux (erg/cm^2/s, 0.5-10 keV)      |
 
 ### BXA solver parameters
 
 | Parameter            | Value                       | Notes                              |
 |----------------------|-----------------------------|------------------------------------|
-| n_live_points        | max(50 * n_free, 100)       | 150 for 3-parameter models         |
-| evidence_tolerance   | 0.5                         | Faster convergence (default: 0.1)  |
+| n_live_points        | max(35 * n_free, 100)       | 105 for 3-parameter models         |
+| evidence_tolerance   | 1.0                         | OK for parameter estimation; use 0.5 for model comparison |
 | speed                | "safe"                      | BXA default step sampler           |
 | Lepsilon             | 0.1                         | Likelihood tolerance               |
-| pre-fit              | Enabled by default          | Tightens priors before sampling    |
+| pre-fit              | On by default, off with --no_prefit | Only tightens lg10Flux; DR15 production ran with --no_prefit |
 
 ---
 

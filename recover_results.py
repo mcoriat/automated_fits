@@ -172,8 +172,12 @@ def parse_log_file(log_path):
     #     otherwise pre-fit p-value < 0.01
     # 2 = PhoIndex pegged at prior boundary
     #     (median within 0.05 of hard limits 1.0 or 3.0)
-    # 4 = nH pegged at upper prior boundary
-    #     (median > 9.5, i.e. near the 10.0 cap)
+    # 4 = high nH (median >= 100 in 1e22 units = 1e24 cm^-2,
+    #     Compton-thick). Matches NH_PEG_THRESHOLD in
+    #     spectral_fitting_bxa_adapted.py. The prior cap is
+    #     1000, so this is a physical selector rather than a
+    #     true boundary peg. (An earlier version used 9.5,
+    #     from when the prior cap was 10.)
     # Flags are combined as a bitmask.
     flag = 0
 
@@ -191,7 +195,7 @@ def parse_log_file(log_path):
 
     if "nH" in params:
         nh_med = params["nH"][0]
-        if nh_med >= 9.5:
+        if nh_med >= 100.0:
             flag |= 4
 
     return {
@@ -385,7 +389,7 @@ def main():
           f"{np.sum((flags & 1) > 0)}")
     print(f"    bit 2 (PhoIndex pegged): "
           f"{np.sum((flags & 2) > 0)}")
-    print(f"    bit 4 (nH pegged):       "
+    print(f"    bit 4 (nH >= 1e24 cm^-2): "
           f"{np.sum((flags & 4) > 0)}")
 
 

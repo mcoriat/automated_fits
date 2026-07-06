@@ -191,14 +191,17 @@ def check_spectra(list_spectra, responses_dir, output_dir, log_file):
                         message = f"       spectrum:{banner} - Source spectrum has <=0 total counts"
                         logger.info(message)
                         if (pn):
-                            if (pn_flag<=1 or pn_flag[3]<=0):
+                            # NB: this used to read "pn_flag[3]" (indexing an int),
+                            #     which raised TypeError whenever pn_flag was already 2;
+                            #     the intended test is on the stored tuple's source counts
+                            if (pn_flag<=1 or pn_tuple[1]<=0):
                                 # only updating pn_tuple if only spectra with <=0 bgd counts or
                                 #      only spectra with <=0 total source counds found yet
                                 # spectra with sp_counts>0 but sp_netcts<0 take precedence in output
                                 pn_flag=2
                                 pn_tuple=(spectrum_file,sp_counts,bg_counts,sp_netcts,sp_exp,pn_flag,sp_snr,instrument)
                         else:
-                            if (mos_flag<=1 or mos_flag[3]<=0):
+                            if (mos_flag<=1 or mos_tuple[1]<=0):
                                 # only updating mos_tuple if only spectra with <=0 bgd counts or
                                 #      only spectra with <=0 total source counds found yet
                                 # spectra with sp_counts>0 but sp_netcts<0 take precedence in output
