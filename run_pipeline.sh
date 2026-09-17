@@ -41,7 +41,7 @@ SRCID_FILE="${ENTRY_DIR}/srcids_for_spec_pipe.txt"
 # Default parallel settings
 NWORKERS=120         # Number of parallel batch jobs (Lovelace: 128 threads, ~8 for OS headroom)
 MODEL="powerlaw"     # Spectral model: powerlaw, apec_single, blackbody, bremss
-SUBDIR="product"     # Subdirectory under OBS_ID: 'product' (5XMM) or 'pps' (4XMM)
+SUBDIR="pps"     # Subdirectory under OBS_ID: 'product' (5XMM) or 'pps' (4XMM)
 TEST_NSOURCES=10     # Number of sources for test run
 CLEANUP_CHAINS=false # Delete chain.fits/corner.png after extracting statistics
 NO_PREFIT=false      # Skip the LM pre-fit step (recommended; matches D6.2/Viitanen+25)
